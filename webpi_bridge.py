@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import termios
+import time
 
 
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -172,8 +173,13 @@ def _make_handler():
             try:
                 pi_command = await asyncio.to_thread(ensure_pi_runtime)
                 self.workspace = _new_workspace()
+                initial_cols = max(1, min(int(self.get_query_argument("cols", "100")), 500))
+                initial_rows = max(1, min(int(self.get_query_argument("rows", "30")), 200))
                 pid, fd = pty.fork()
                 if pid == 0:
+                    # Give the parent a moment to apply the browser's terminal
+                    # dimensions before Pi performs its one-time startup draw.
+                    time.sleep(0.1)
                     os.chdir(self.workspace)
                     env = os.environ.copy()
                     env["PI_CODING_AGENT_DIR"] = str(AGENT_DIR)
@@ -200,7 +206,7 @@ def _make_handler():
 
                 self.pid, self.fd = pid, fd
                 os.set_blocking(fd, False)
-                _resize(fd, 30, 100)
+                _resize(fd, initial_rows, initial_cols)
                 tornado.ioloop.IOLoop.current().add_handler(
                     fd, self._on_pty_output, tornado.ioloop.IOLoop.READ
                 )

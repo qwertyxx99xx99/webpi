@@ -63,6 +63,9 @@ terminal_html = """
     const parentUrl = new URL(document.referrer || window.parent.location.href);
     const socketUrl = new URL('webpi/terminal', parentUrl);
     socketUrl.protocol = parentUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+    fit.fit();
+    socketUrl.searchParams.set('cols', term.cols);
+    socketUrl.searchParams.set('rows', term.rows);
     const ws = new WebSocket(socketUrl);
     ws.binaryType = 'arraybuffer';
     const resize = () => {
