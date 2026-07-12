@@ -314,16 +314,16 @@ function streamExa(
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.registerProvider("exa-direct", {
-    name: "Exa Direct",
+  pi.registerProvider("exa-legacy", {
+    name: "Exa Legacy",
     baseUrl: EXA_ENDPOINT,
     apiKey: "exa-public",
     authHeader: false,
-    api: "openai-completions",
+    api: "exa-legacy" as any,
     models: [
       {
         id: "google/gemini-2.5-flash",
-        name: "Gemini 2.5 Flash (Exa Direct)",
+        name: "Gemini 2.5 Flash (Exa Legacy)",
         reasoning: false,
         input: ["text"],
         contextWindow: 128000,

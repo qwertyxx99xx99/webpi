@@ -54,8 +54,10 @@ RCLONE_BUILDS = {
         "417cabd402d57806d597bd0ba8fb33a434ca8c2a1a5aa98de5a0bd4b52b39202",
     ),
 }
-EXA_PROVIDER = "exa-direct"
+EXA_PROVIDER = "exa-enhanced"
 EXA_MODEL = "google/gemini-2.5-flash"
+BAML_VERSION = "0.223.0"
+MDAST_VERSION = "2.0.2"
 _INSTALL_LOCK = threading.Lock()
 _RCLONE_INSTALL_LOCK = threading.Lock()
 _RCLONE_SYNC_LOCK = threading.Lock()
@@ -195,12 +197,21 @@ def _write_agent_config() -> None:
     extensions = AGENT_DIR / "extensions"
     extensions.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "pi_extensions" / "exa-direct.ts", extensions / "exa-direct.ts")
+    shutil.copy2(ROOT / "pi_extensions" / "exa-enhanced.ts", extensions / "exa-enhanced.ts")
+    shutil.copytree(
+        ROOT / "pi_baml" / "baml_client",
+        AGENT_DIR / "baml_exa" / "baml_client",
+        dirs_exist_ok=True,
+    )
+    agent_node_modules = AGENT_DIR / "node_modules"
+    if not agent_node_modules.exists():
+        agent_node_modules.symlink_to(RUNTIME_DIR / "node_modules", target_is_directory=True)
     shutil.copy2(ROOT / "pi_config" / "AGENTS.md", AGENT_DIR / "AGENTS.md")
     (AGENT_DIR / "settings.json").write_text(
         """{
   "lastChangelogVersion": "0.80.6",
   "theme": "dark",
-  "defaultProvider": "exa-direct",
+  "defaultProvider": "exa-enhanced",
   "defaultModel": "google/gemini-2.5-flash",
   "quietStartup": false,
   "defaultProjectTrust": "never",
@@ -227,13 +238,17 @@ def _write_agent_config() -> None:
 def ensure_pi_runtime() -> str:
     """Install an isolated Node/Pi runtime and return the Pi executable."""
     runtime_pi = RUNTIME_DIR / "node_modules" / ".bin" / "pi"
+    baml_runtime = RUNTIME_DIR / "node_modules" / "@boundaryml" / "baml" / "package.json"
+    mdast_runtime = RUNTIME_DIR / "node_modules" / "mdast-util-from-markdown" / "package.json"
     isolated_node = NODE_DIR / "bin" / "node"
-    if runtime_pi.exists() and isolated_node.exists() and _node_major(str(isolated_node)) >= 22:
+    runtime_ready = runtime_pi.exists() and baml_runtime.exists() and mdast_runtime.exists()
+    if runtime_ready and isolated_node.exists() and _node_major(str(isolated_node)) >= 22:
         _write_agent_config()
         return str(runtime_pi)
 
     with _INSTALL_LOCK:
-        if runtime_pi.exists() and isolated_node.exists() and _node_major(str(isolated_node)) >= 22:
+        runtime_ready = runtime_pi.exists() and baml_runtime.exists() and mdast_runtime.exists()
+        if runtime_ready and isolated_node.exists() and _node_major(str(isolated_node)) >= 22:
             _write_agent_config()
             return str(runtime_pi)
 
@@ -268,6 +283,8 @@ def ensure_pi_runtime() -> str:
                 "--no-audit",
                 "--no-fund",
                 f"@earendil-works/pi-coding-agent@{PI_VERSION}",
+                f"@boundaryml/baml@{BAML_VERSION}",
+                f"mdast-util-from-markdown@{MDAST_VERSION}",
             ],
             check=True,
             env=install_env,

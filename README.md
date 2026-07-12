@@ -34,8 +34,9 @@ cursor movement, and responsive terminal resizing.
 
 - **The real Pi TUI** — connected through a native pseudo-terminal, not parsed
   or redrawn as HTML.
-- **Zero model setup** — the bundled `exa-direct` extension defaults to
-  `google/gemini-2.5-flash` through Exa's public demo endpoint.
+- **Zero model setup** — the default `exa-enhanced` provider uses BAML schema
+  alignment with `google/gemini-2.5-flash` through Exa's public demo endpoint;
+  the original adapter remains available as `exa-legacy`.
 - **Full-screen xterm.js** — responsive sizing, 10,000 lines of scrollback,
   true-color ANSI output, clickable links, paste, arrows, Escape, and Ctrl-key
   handling.
@@ -67,7 +68,7 @@ Browser
             └─ Streamlit's Tornado server
                  └─ Linux PTY
                       └─ Pi CLI
-                           ├─ Exa Direct provider
+                           ├─ Exa Enhanced + Exa Legacy providers
                            ├─ isolated temporary workspace
                            ├─ public/ static file route
                            └─ read / bash / edit / write tools
@@ -131,8 +132,11 @@ WebPi creates a clean global agent directory at `/tmp/webpi-agent` containing:
 ├── settings.json
 ├── bin/
 │   └── fd → fdfind
+├── baml_exa/
+│   └── baml_client/          # Generated tolerant tool-call parser
 └── extensions/
-    └── exa-direct.ts
+    ├── exa-enhanced.ts       # Default BAML-backed provider
+    └── exa-direct.ts         # Legacy hand-written parser
 ```
 
 The configuration follows Pi's documented interactive defaults:
@@ -143,6 +147,8 @@ The configuration follows Pi's documented interactive defaults:
 - Install telemetry and analytics disabled.
 - Project-local executable resources are not trusted automatically.
 - A global `AGENTS.md` defines hosted-workspace conventions.
+- `exa-enhanced/google/gemini-2.5-flash` is selected by default. Use Pi's model
+  picker to switch to `exa-legacy/google/gemini-2.5-flash` when needed.
 
 See the official [Pi documentation](https://pi.dev/docs/latest) for commands,
 keybindings, extensions, skills, sessions, and configuration.
@@ -333,7 +339,11 @@ webpi/
 ├── sitecustomize.py          # Installs the route before Streamlit starts
 ├── setup.py                  # Packages bootstrap modules and Pi assets
 ├── pi_extensions/
-│   └── exa-direct.ts         # Exa-backed Pi provider
+│   ├── exa-enhanced.ts       # BAML-backed default Exa provider
+│   └── exa-direct.ts         # Legacy Exa provider
+├── pi_baml/
+│   ├── baml_src/             # Typed core-tool union schema
+│   └── baml_client/          # Generated TypeScript parser
 ├── pi_config/
 │   └── AGENTS.md             # Hosted-workspace guidance
 ├── packages.txt              # Streamlit Cloud system packages
