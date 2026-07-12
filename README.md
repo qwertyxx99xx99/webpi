@@ -43,6 +43,9 @@ cursor movement, and responsive terminal resizing.
   `0700` directory under `/tmp/webpi-workspaces`.
 - **Fresh session storage** — Pi transcripts stay inside that connection's
   temporary workspace.
+- **Persistent Proton workspace** — `$RCLONE_MOUNT_DIR` restores Proton Drive
+  when the app starts, then mirrors individual local file changes back through
+  filesystem events so projects explicitly marked persistent survive restarts.
 - **Instant static publishing** — files written to `public/` are served at the
   session-specific URL in `$WEBPI_PUBLIC_URL`, with no localhost server needed.
 - **Scoped localhost servers** — each terminal receives one assigned port and
