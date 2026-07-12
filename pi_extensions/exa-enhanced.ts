@@ -275,6 +275,25 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
+async function feedbackAction(
+  context: Context,
+  content: string,
+  cause: unknown,
+): Promise<any> {
+  if (!context.tools?.some((tool: any) => tool.name === "bash"))
+    throw new AggregateError(
+      [cause],
+      "Exa recovery requires the bash tool",
+    );
+  await writeFile(resolve(process.cwd(), "last_output_feedback.log"), content, "utf8");
+  return { actions: [{
+    tool: "bash",
+    arguments: {
+      command: "cat -- last_output_feedback.log && : > last_output_feedback.log",
+    },
+  }] };
+}
+
 function emitTextResult(
   stream: AssistantMessageEventStream,
   output: AssistantMessage,
@@ -355,36 +374,33 @@ function streamExaBaml(
       });
       const prompt = renderedPrompt(request.body.json());
       throwIfAborted(options?.signal);
-      const modelText = await askExa(prompt, options?.signal);
-      throwIfAborted(options?.signal);
+      let modelText = "";
       let parsed: any;
       try {
-        parsed = b.parse.NextAction(modelText, {
-          tb,
-          env: { OPENAI_API_KEY: "unused" },
-        });
-      } catch (firstParseError) {
-        if (!context.tools?.some((tool: any) => tool.name === "bash"))
-          throw new AggregateError(
-            [firstParseError],
-            "BAML could not parse the response and the bash tool is unavailable",
+        modelText = await askExa(prompt, options?.signal);
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== "Exa returned no assistant content")
+          throw error;
+        parsed = await feedbackAction(context, "Continue with task.\n", error);
+      }
+      throwIfAborted(options?.signal);
+      if (!parsed) {
+        try {
+          parsed = b.parse.NextAction(modelText, {
+            tb,
+            env: { OPENAI_API_KEY: "unused" },
+          });
+        } catch (firstParseError) {
+          parsed = await feedbackAction(
+            context,
+            `${FEEDBACK_PREFIX} and could not be converted into a ` +
+            `Pi text response or tool call. Continue the original task and emit ` +
+            `valid output matching the required schema. Do not repeat the invalid ` +
+            `response and do not return an empty actions list.\n\n` +
+            `Rejected output:\n${modelText}\n`,
+            firstParseError,
           );
-        const feedbackPath = resolve(process.cwd(), "last_output_feedback.log");
-        await writeFile(
-          feedbackPath,
-          `${FEEDBACK_PREFIX} and could not be converted into a ` +
-          `Pi text response or tool call. Continue the original task and emit ` +
-          `valid output matching the required schema. Do not repeat the invalid ` +
-          `response and do not return an empty actions list.\n\n` +
-          `Rejected output:\n${modelText}\n`,
-          "utf8",
-        );
-        parsed = { actions: [{
-          tool: "bash",
-          arguments: {
-            command: "cat -- last_output_feedback.log && : > last_output_feedback.log",
-          },
-        }] };
+        }
       }
 
       throwIfAborted(options?.signal);
