@@ -40,6 +40,13 @@ def _node_major(command: str) -> int:
 
 def _write_agent_config() -> None:
     AGENT_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    agent_bin = AGENT_DIR / "bin"
+    agent_bin.mkdir(parents=True, exist_ok=True)
+    # Debian packages fd as `fdfind`; Pi expects the upstream `fd` name.
+    fdfind = shutil.which("fdfind")
+    fd_alias = agent_bin / "fd"
+    if fdfind and not fd_alias.exists():
+        fd_alias.symlink_to(fdfind)
     extensions = AGENT_DIR / "extensions"
     extensions.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "pi_extensions" / "exa-direct.ts", extensions / "exa-direct.ts")
@@ -154,6 +161,7 @@ def _make_handler():
                     env["PI_TELEMETRY"] = "0"
                     env["TERM"] = "xterm-256color"
                     env["COLORTERM"] = "truecolor"
+                    env["PATH"] = f"{AGENT_DIR / 'bin'}:{env.get('PATH', '')}"
                     if (NODE_DIR / "bin").exists():
                         env["PATH"] = f"{NODE_DIR / 'bin'}:{env.get('PATH', '')}"
                     os.execvpe(
