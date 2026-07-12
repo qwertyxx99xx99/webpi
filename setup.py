@@ -5,7 +5,7 @@ from setuptools import setup
 # startup, before the `streamlit` console script constructs its web server.
 setup(
     name="webpi-bootstrap",
-    version="0.6.0",
+    version="0.7.0",
     py_modules=["sitecustomize", "webpi_bridge"],
     packages=["pi_extensions", "pi_config"],
     package_data={

@@ -574,14 +574,21 @@ def _make_handler():
                     env["PATH"] = f"{PERSIST_BIN_DIR}:{env.get('PATH', '')}"
                     if (NODE_DIR / "bin").exists():
                         env["PATH"] = f"{NODE_DIR / 'bin'}:{env.get('PATH', '')}"
+                    env["PATH"] = f"{RUNTIME_DIR / 'node_modules' / '.bin'}:{env.get('PATH', '')}"
+                    env["WEBPI_PI_COMMAND"] = pi_command
+                    env["WEBPI_PI_PROVIDER"] = EXA_PROVIDER
+                    env["WEBPI_PI_MODEL"] = EXA_MODEL
                     os.execvpe(
-                        pi_command,
+                        "/bin/bash",
                         [
-                            pi_command,
-                            "--provider",
-                            EXA_PROVIDER,
-                            "--model",
-                            EXA_MODEL,
+                            "/bin/bash",
+                            "--noprofile",
+                            "--norc",
+                            "-i",
+                            "-c",
+                            '"$WEBPI_PI_COMMAND" --provider "$WEBPI_PI_PROVIDER" '
+                            '--model "$WEBPI_PI_MODEL"; '
+                            "exec /bin/bash --noprofile --norc -i",
                         ],
                         env,
                     )

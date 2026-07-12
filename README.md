@@ -55,7 +55,8 @@ cursor movement, and responsive terminal resizing.
 - **Reproducible runtime** — Streamlit bootstraps Node `22.19.0`, Pi `0.80.6`,
   rclone `1.74.3`, `ripgrep`, and `fd-find` when the app environment is created.
 - **Normal interactive startup** — Pi displays its standard header, loaded
-  global context, model, and extensions.
+  global context, model, and extensions. Exiting Pi drops into a normal Bash
+  terminal; run `pi` to start it again.
 
 ## Architecture
 
@@ -271,6 +272,21 @@ The local copy is ephemeral across app reboots, but WebPi downloads it again
 from Proton automatically. The obscured password in the configuration is
 reversible and should not be published.
 
+## Switch from Pi to Bash
+
+WebPi starts in Pi, but the PTY is backed by an interactive Linux Bash shell.
+Use `/exit` or `/quit` to leave Pi without disconnecting the terminal. You will
+land at a normal Bash prompt with the same workspace, persistent command `PATH`,
+Proton directory, public URL, proxy port, Node, and rclone environment.
+
+Run Pi again at any time:
+
+```bash
+pi
+```
+
+Closing the browser tab ends the terminal connection; exiting Pi does not.
+
 ## Keyboard essentials
 
 | Input | Action |
@@ -281,6 +297,7 @@ reversible and should not be published.
 | `Ctrl+C` / `Ctrl+D` | Clear or exit |
 | `Ctrl+O` | Toggle expanded startup/tool output |
 | `/` | Browse Pi commands |
+| `/exit` or `/quit` | Exit Pi and continue in the Linux Bash terminal |
 | `!command` | Run a shell command |
 | `@file` | Reference a workspace file |
 
