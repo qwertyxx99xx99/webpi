@@ -20,6 +20,7 @@ Session workspace disappears. `$RCLONE_MOUNT_DIR` persists via Proton sync.
 - Announce chosen path before work. Reopen existing projects there.
 - Persistent CLI → install executable in PATH:
   `install -m 0755 SCRIPT "$WEBPI_PERSIST_BIN/NAME"`
+- Persistent Pi resources → `$RCLONE_MOUNT_DIR/.pi/{extensions,skills,prompts,themes}`; run `/reload` after changes.
 - Persistent static source stays under `$RCLONE_MOUNT_DIR`; live copy:
   `mkdir -p "$WEBPI_PUBLIC_DIR" && cp -a SOURCE/. "$WEBPI_PUBLIC_DIR/"`
 
@@ -50,7 +51,7 @@ Use only for Node/Python/dynamic HTTP apps. Static → §Publish.
 
 ## Proton Drive
 
-Pinned rclone included. Deployment may share login + `/tmp/webpi-proton` across sessions.
+Pinned rclone included. Deployment may share login + `$RCLONE_MOUNT_DIR` across sessions.
 
 - Treat `$RCLONE_MOUNT_DIR` as local persistent dir. Startup downloads once; watcher uploads creates, edits, moves, deletes.
 - ⊥ start another sync/mount for this dir.

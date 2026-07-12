@@ -2,6 +2,7 @@ import asyncio
 import errno
 import fcntl
 import hashlib
+import json
 import mimetypes
 import os
 import pathlib
@@ -179,6 +180,9 @@ def _node_major(command: str) -> int:
 
 def _write_agent_config() -> None:
     AGENT_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    persistent_pi = RCLONE_SYNC_DIR / ".pi"
+    for resource in ("extensions", "skills", "prompts", "themes"):
+        (persistent_pi / resource).mkdir(parents=True, exist_ok=True)
     agent_bin = AGENT_DIR / "bin"
     agent_bin.mkdir(parents=True, exist_ok=True)
     # Debian packages fd as `fdfind`; Pi expects the upstream `fd` name.
@@ -206,32 +210,36 @@ def _write_agent_config() -> None:
     if not agent_node_modules.exists():
         agent_node_modules.symlink_to(RUNTIME_DIR / "node_modules", target_is_directory=True)
     shutil.copy2(ROOT / "pi_config" / "AGENTS.md", AGENT_DIR / "AGENTS.md")
-    (AGENT_DIR / "settings.json").write_text(
-        """{
-  "lastChangelogVersion": "0.80.6",
-  "theme": "dark",
-  "defaultProvider": "exa-enhanced",
-  "defaultModel": "google/gemini-2.5-flash",
-  "quietStartup": false,
-  "defaultProjectTrust": "never",
-  "enableInstallTelemetry": false,
-  "enableAnalytics": false,
-  "compaction": {
-    "enabled": true,
-    "reserveTokens": 16384,
-    "keepRecentTokens": 20000
-  },
-  "retry": {
-    "enabled": true,
-    "maxRetries": 3,
-    "baseDelayMs": 2000,
-    "provider": {
-      "maxRetries": 0,
-      "maxRetryDelayMs": 60000
+    persistent_resources = {
+        resource: [str(persistent_pi / resource)]
+        for resource in ("extensions", "skills", "prompts", "themes")
     }
-  }
-}\n"""
-    )
+    settings = {
+        "lastChangelogVersion": PI_VERSION,
+        "theme": "dark",
+        "defaultProvider": EXA_PROVIDER,
+        "defaultModel": EXA_MODEL,
+        "quietStartup": False,
+        "defaultProjectTrust": "never",
+        "enableInstallTelemetry": False,
+        "enableAnalytics": False,
+        **persistent_resources,
+        "compaction": {
+            "enabled": True,
+            "reserveTokens": 16384,
+            "keepRecentTokens": 20000,
+        },
+        "retry": {
+            "enabled": True,
+            "maxRetries": 3,
+            "baseDelayMs": 2000,
+            "provider": {
+                "maxRetries": 0,
+                "maxRetryDelayMs": 60000,
+            },
+        },
+    }
+    (AGENT_DIR / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
 
 
 def ensure_pi_runtime() -> str:
