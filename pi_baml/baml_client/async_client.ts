@@ -24,7 +24,7 @@ import { toBamlError, BamlStream, BamlAbortError, Collector, ClientRegistry } fr
 import type { Checked, Check, RecursivePartialNull as MovedRecursivePartialNull } from "./types.js"
 import type { partial_types } from "./partial_types.js"
 import type * as types from "./types.js"
-import type {BashArguments, BashCall, EditArguments, EditCall, FinalAnswer, ReadArguments, ReadCall, WriteArguments, WriteCall} from "./types.js"
+import type {DynamicDecision, FinalAnswer} from "./types.js"
 import type TypeBuilder from "./type_builder.js"
 import { AsyncHttpRequest, AsyncHttpStreamRequest } from "./async_request.js"
 import { LlmResponseParser, LlmStreamParser } from "./parser.js"
@@ -96,11 +96,11 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
         return this.llmStreamParser
         }
 
-        
+
         async NextAction(
         context: string,
         __baml_options__?: BamlCallOptions<never>
-        ): Promise<types.BashCall | types.ReadCall | types.EditCall | types.WriteCall | types.FinalAnswer> {
+        ): Promise<types.DynamicDecision> {
           try {
           const __options__ = { ...this.bamlOptions, ...(__baml_options__ || {}) }
           const __signal__ = __options__.signal;
@@ -147,12 +147,12 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
             __signal__,
             __options__.watchers,
             )
-            return __raw__.parsed(false) as types.BashCall | types.ReadCall | types.EditCall | types.WriteCall | types.FinalAnswer
+            return __raw__.parsed(false) as types.DynamicDecision
             } catch (error) {
             throw toBamlError(error);
             }
             }
-            
+
             }
 
             class BamlStreamClient {
@@ -166,11 +166,11 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
             this.bamlOptions = bamlOptions || {}
             }
 
-            
+
             NextAction(
             context: string,
             __baml_options__?: BamlCallOptions<never>
-            ): BamlStream<partial_types.BashCall | partial_types.ReadCall | partial_types.EditCall | partial_types.WriteCall | partial_types.FinalAnswer, types.BashCall | types.ReadCall | types.EditCall | types.WriteCall | types.FinalAnswer>
+            ): BamlStream<partial_types.DynamicDecision, types.DynamicDecision>
               {
               try {
               const __options__ = { ...this.bamlOptions, ...(__baml_options__ || {}) }
@@ -229,10 +229,10 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
                 __signal__,
                 __onTickWrapper__,
                 )
-                return new BamlStream<partial_types.BashCall | partial_types.ReadCall | partial_types.EditCall | partial_types.WriteCall | partial_types.FinalAnswer, types.BashCall | types.ReadCall | types.EditCall | types.WriteCall | types.FinalAnswer>(
+                return new BamlStream<partial_types.DynamicDecision, types.DynamicDecision>(
                   __raw__,
-                  (a): partial_types.BashCall | partial_types.ReadCall | partial_types.EditCall | partial_types.WriteCall | partial_types.FinalAnswer => a,
-                  (a): types.BashCall | types.ReadCall | types.EditCall | types.WriteCall | types.FinalAnswer => a,
+                  (a): partial_types.DynamicDecision => a,
+                  (a): types.DynamicDecision => a,
                   this.ctxManager.cloneContext(),
                   __options__.signal,
                   )
@@ -240,7 +240,7 @@ export type RecursivePartialNull<T> = MovedRecursivePartialNull<T>
                   throw toBamlError(error);
                   }
                   }
-                  
+
                   }
 
                   export const b = new BamlAsyncClient(DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME,

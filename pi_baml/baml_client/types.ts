@@ -47,58 +47,13 @@ export function all_succeeded<CheckName extends string>(checks: Record<CheckName
 export function get_checks<CheckName extends string>(checks: Record<CheckName, Check>): Check[] {
     return Object.values(checks)
 }
-export interface BashArguments {
-  command: string
-  timeout?: number | null
-  
-}
+export interface DynamicDecision {
 
-export interface BashCall {
-  tool: "bash"
-  arguments: BashArguments
-  
-}
-
-export interface EditArguments {
-  path: string
-  oldText: string
-  newText: string
-  
-}
-
-export interface EditCall {
-  tool: "edit"
-  arguments: EditArguments
-  
+  [key: string]: any;
 }
 
 export interface FinalAnswer {
   tool: "final"
   content: string
-  
-}
 
-export interface ReadArguments {
-  path: string
-  offset?: number | null
-  limit?: number | null
-  
-}
-
-export interface ReadCall {
-  tool: "read"
-  arguments: ReadArguments
-  
-}
-
-export interface WriteArguments {
-  path: string
-  content: string
-  
-}
-
-export interface WriteCall {
-  tool: "write"
-  arguments: WriteArguments
-  
 }

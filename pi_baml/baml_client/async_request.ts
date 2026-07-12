@@ -23,7 +23,7 @@ import type { BamlRuntime, BamlCtxManager, Image, Audio, Pdf, Video, FunctionLog
 import { toBamlError, HTTPRequest, ClientRegistry } from "@boundaryml/baml"
 import type { Checked, Check } from "./types.js"
 import type * as types from "./types.js"
-import type {BashArguments, BashCall, EditArguments, EditCall, FinalAnswer, ReadArguments, ReadCall, WriteArguments, WriteCall} from "./types.js"
+import type {DynamicDecision, FinalAnswer} from "./types.js"
 import type TypeBuilder from "./type_builder.js"
 import type * as events from "./events.js"
 
@@ -41,7 +41,7 @@ env?: Record<string, string | undefined>
   export class AsyncHttpRequest {
   constructor(private runtime: BamlRuntime, private ctxManager: BamlCtxManager) {}
 
-  
+
   async NextAction(
   context: string,
   __baml_options__?: BamlCallOptions<never>
@@ -74,13 +74,13 @@ env?: Record<string, string | undefined>
       throw toBamlError(error);
       }
       }
-      
+
       }
 
       export class AsyncHttpStreamRequest {
       constructor(private runtime: BamlRuntime, private ctxManager: BamlCtxManager) {}
 
-      
+
       async NextAction(
       context: string,
       __baml_options__?: BamlCallOptions<never>
@@ -113,5 +113,5 @@ env?: Record<string, string | undefined>
           throw toBamlError(error);
           }
           }
-          
+
           }

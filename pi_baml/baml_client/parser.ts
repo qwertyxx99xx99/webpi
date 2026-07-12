@@ -23,17 +23,17 @@ import { toBamlError } from "@boundaryml/baml"
 import type { Checked, Check } from "./types.js"
 import type { partial_types } from "./partial_types.js"
 import type * as types from "./types.js"
-import type {BashArguments, BashCall, EditArguments, EditCall, FinalAnswer, ReadArguments, ReadCall, WriteArguments, WriteCall} from "./types.js"
+import type {DynamicDecision, FinalAnswer} from "./types.js"
 import type TypeBuilder from "./type_builder.js"
 
 export class LlmResponseParser {
   constructor(private runtime: BamlRuntime, private ctxManager: BamlCtxManager) {}
 
-  
+
   NextAction(
       llmResponse: string,
       __baml_options__?: { tb?: TypeBuilder, clientRegistry?: ClientRegistry, env?: Record<string, string | undefined> }
-  ): types.BashCall | types.ReadCall | types.EditCall | types.WriteCall | types.FinalAnswer {
+  ): types.DynamicDecision {
     try {
       const __rawEnv__ = __baml_options__?.env ? { ...process.env, ...__baml_options__.env } : { ...process.env };
       const __env__: Record<string, string> = Object.fromEntries(
@@ -47,22 +47,22 @@ export class LlmResponseParser {
         __baml_options__?.tb?.__tb(),
         __baml_options__?.clientRegistry,
         __env__,
-      ) as types.BashCall | types.ReadCall | types.EditCall | types.WriteCall | types.FinalAnswer
+      ) as types.DynamicDecision
     } catch (error) {
       throw toBamlError(error);
     }
   }
-  
+
 }
 
 export class LlmStreamParser {
   constructor(private runtime: BamlRuntime, private ctxManager: BamlCtxManager) {}
 
-  
+
   NextAction(
       llmResponse: string,
       __baml_options__?: { tb?: TypeBuilder, clientRegistry?: ClientRegistry, env?: Record<string, string | undefined> }
-  ): partial_types.BashCall | partial_types.ReadCall | partial_types.EditCall | partial_types.WriteCall | partial_types.FinalAnswer {
+  ): partial_types.DynamicDecision {
     try {
       const __rawEnv__ = __baml_options__?.env ? { ...process.env, ...__baml_options__.env } : { ...process.env };
       const __env__: Record<string, string> = Object.fromEntries(
@@ -76,10 +76,10 @@ export class LlmStreamParser {
         __baml_options__?.tb?.__tb(),
         __baml_options__?.clientRegistry,
         __env__,
-      ) as partial_types.BashCall | partial_types.ReadCall | partial_types.EditCall | partial_types.WriteCall | partial_types.FinalAnswer
+      ) as partial_types.DynamicDecision
     } catch (error) {
       throw toBamlError(error);
     }
   }
-  
+
 }

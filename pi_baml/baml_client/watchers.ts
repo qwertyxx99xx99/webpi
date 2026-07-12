@@ -97,4 +97,3 @@ export interface InternalEventBindings {
 export interface EventCollectorInternal {
   __handlers(): InternalEventBindings
 }
-

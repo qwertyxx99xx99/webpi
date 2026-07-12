@@ -149,6 +149,9 @@ The configuration follows Pi's documented interactive defaults:
 - A global `AGENTS.md` defines hosted-workspace conventions.
 - `exa-enhanced/google/gemini-2.5-flash` is selected by default. Use Pi's model
   picker to switch to `exa-legacy/google/gemini-2.5-flash` when needed.
+- Exa Enhanced builds its BAML decision schema from Pi's currently enabled
+  tools on every turn, so future built-in and extension-provided tools are
+  available automatically without hardcoded tool names.
 
 See the official [Pi documentation](https://pi.dev/docs/latest) for commands,
 keybindings, extensions, skills, sessions, and configuration.

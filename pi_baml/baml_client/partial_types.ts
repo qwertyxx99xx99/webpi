@@ -20,7 +20,7 @@ $ pnpm add @boundaryml/baml
 
 import type { Image, Audio, Pdf, Video } from "@boundaryml/baml"
 import type { Checked, Check } from "./types.js"
-import type {  BashArguments,  BashCall,  EditArguments,  EditCall,  FinalAnswer,  ReadArguments,  ReadCall,  WriteArguments,  WriteCall } from "./types.js"
+import type {  DynamicDecision,  FinalAnswer } from "./types.js"
 import type * as types from "./types.js"
 
 /******************************************************************************
@@ -36,42 +36,11 @@ export interface StreamState<T> {
 }
 
 export namespace partial_types {
-    export interface BashArguments {
-      command?: string | null
-      timeout?: number | null
-    }
-    export interface BashCall {
-      tool?: "bash" | null
-      arguments?: BashArguments | null
-    }
-    export interface EditArguments {
-      path?: string | null
-      oldText?: string | null
-      newText?: string | null
-    }
-    export interface EditCall {
-      tool?: "edit" | null
-      arguments?: EditArguments | null
+    export interface DynamicDecision {
+      [key: string]: any;
     }
     export interface FinalAnswer {
       tool?: "final" | null
       content?: string | null
-    }
-    export interface ReadArguments {
-      path?: string | null
-      offset?: number | null
-      limit?: number | null
-    }
-    export interface ReadCall {
-      tool?: "read" | null
-      arguments?: ReadArguments | null
-    }
-    export interface WriteArguments {
-      path?: string | null
-      content?: string | null
-    }
-    export interface WriteCall {
-      tool?: "write" | null
-      arguments?: WriteArguments | null
     }
 }

@@ -22,7 +22,7 @@ import type { BamlRuntime, BamlCtxManager, Image, Audio, Pdf, Video } from "@bou
 import { toBamlError, HTTPRequest, ClientRegistry } from "@boundaryml/baml"
 import type { Checked, Check } from "./types.js"
 import type * as types from "./types.js"
-import type {BashArguments, BashCall, EditArguments, EditCall, FinalAnswer, ReadArguments, ReadCall, WriteArguments, WriteCall} from "./types.js"
+import type {DynamicDecision, FinalAnswer} from "./types.js"
 import type TypeBuilder from "./type_builder.js"
 import type * as events from "./events.js"
 
@@ -37,7 +37,7 @@ type BamlCallOptions<EventsT = never> = {
 export class HttpRequest {
   constructor(private runtime: BamlRuntime, private ctxManager: BamlCtxManager) {}
 
-  
+
   NextAction(
       context: string,
       __baml_options__?: BamlCallOptions<never>
@@ -70,13 +70,13 @@ export class HttpRequest {
       throw toBamlError(error);
     }
   }
-  
+
 }
 
 export class HttpStreamRequest {
   constructor(private runtime: BamlRuntime, private ctxManager: BamlCtxManager) {}
 
-  
+
   NextAction(
       context: string,
       __baml_options__?: BamlCallOptions<never>
@@ -109,5 +109,5 @@ export class HttpStreamRequest {
       throw toBamlError(error);
     }
   }
-  
+
 }

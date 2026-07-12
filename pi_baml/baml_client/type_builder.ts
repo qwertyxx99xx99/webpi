@@ -26,75 +26,33 @@ export { FieldType, EnumBuilder, ClassBuilder }
 
 export default class TypeBuilder {
     private tb: _TypeBuilder;
-    
-    BashArguments: ClassViewer<'BashArguments', "command" | "timeout">;
-    
-    BashCall: ClassViewer<'BashCall', "tool" | "arguments">;
-    
-    EditArguments: ClassViewer<'EditArguments', "path" | "oldText" | "newText">;
-    
-    EditCall: ClassViewer<'EditCall', "tool" | "arguments">;
-    
+
+    DynamicDecision: ClassBuilder<'DynamicDecision'>;
+
     FinalAnswer: ClassViewer<'FinalAnswer', "tool" | "content">;
-    
-    ReadArguments: ClassViewer<'ReadArguments', "path" | "offset" | "limit">;
-    
-    ReadCall: ClassViewer<'ReadCall', "tool" | "arguments">;
-    
-    WriteArguments: ClassViewer<'WriteArguments', "path" | "content">;
-    
-    WriteCall: ClassViewer<'WriteCall', "tool" | "arguments">;
-    
-    
+
+
 
     constructor() {
         this.tb = new _TypeBuilder({
           classes: new Set([
-            "BashArguments","BashCall","EditArguments","EditCall","FinalAnswer","ReadArguments","ReadCall","WriteArguments","WriteCall",
+            "DynamicDecision","FinalAnswer",
           ]),
           enums: new Set([
-            
+
           ]),
           runtime: DO_NOT_USE_DIRECTLY_UNLESS_YOU_KNOW_WHAT_YOURE_DOING_RUNTIME
         });
-        
-        this.BashArguments = this.tb.classViewer("BashArguments", [
-          "command","timeout",
+
+        this.DynamicDecision = this.tb.classBuilder("DynamicDecision", [
+
         ]);
-        
-        this.BashCall = this.tb.classViewer("BashCall", [
-          "tool","arguments",
-        ]);
-        
-        this.EditArguments = this.tb.classViewer("EditArguments", [
-          "path","oldText","newText",
-        ]);
-        
-        this.EditCall = this.tb.classViewer("EditCall", [
-          "tool","arguments",
-        ]);
-        
+
         this.FinalAnswer = this.tb.classViewer("FinalAnswer", [
           "tool","content",
         ]);
-        
-        this.ReadArguments = this.tb.classViewer("ReadArguments", [
-          "path","offset","limit",
-        ]);
-        
-        this.ReadCall = this.tb.classViewer("ReadCall", [
-          "tool","arguments",
-        ]);
-        
-        this.WriteArguments = this.tb.classViewer("WriteArguments", [
-          "path","content",
-        ]);
-        
-        this.WriteCall = this.tb.classViewer("WriteCall", [
-          "tool","arguments",
-        ]);
-        
-        
+
+
     }
 
     reset(): void {
@@ -106,7 +64,7 @@ export default class TypeBuilder {
         // wraps over the Rust type builder, so we only need to call tb.reset().
         // In JS it's not possible unless we refactor the way class builders are
         // accessed.
-        
+         this.DynamicDecision.reset();
     }
 
     __tb() {
