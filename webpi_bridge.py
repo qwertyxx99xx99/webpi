@@ -50,13 +50,31 @@ def _write_agent_config() -> None:
     extensions = AGENT_DIR / "extensions"
     extensions.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "pi_extensions" / "exa-direct.ts", extensions / "exa-direct.ts")
+    shutil.copy2(ROOT / "pi_config" / "AGENTS.md", AGENT_DIR / "AGENTS.md")
     (AGENT_DIR / "settings.json").write_text(
         """{
+  "lastChangelogVersion": "0.80.6",
   "theme": "dark",
   "defaultProvider": "exa-direct",
   "defaultModel": "google/gemini-2.5-flash",
-  "telemetry": false,
-  "quietStartup": true
+  "quietStartup": false,
+  "defaultProjectTrust": "never",
+  "enableInstallTelemetry": false,
+  "enableAnalytics": false,
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  },
+  "retry": {
+    "enabled": true,
+    "maxRetries": 3,
+    "baseDelayMs": 2000,
+    "provider": {
+      "maxRetries": 0,
+      "maxRetryDelayMs": 60000
+    }
+  }
 }\n"""
     )
 
@@ -101,6 +119,7 @@ def ensure_pi_runtime() -> str:
                 "install",
                 "--prefix",
                 str(RUNTIME_DIR),
+                "--ignore-scripts",
                 "--no-audit",
                 "--no-fund",
                 f"@earendil-works/pi-coding-agent@{PI_VERSION}",
@@ -158,6 +177,9 @@ def _make_handler():
                     os.chdir(self.workspace)
                     env = os.environ.copy()
                     env["PI_CODING_AGENT_DIR"] = str(AGENT_DIR)
+                    session_dir = self.workspace / ".pi-sessions"
+                    session_dir.mkdir(mode=0o700)
+                    env["PI_CODING_AGENT_SESSION_DIR"] = str(session_dir)
                     env["PI_TELEMETRY"] = "0"
                     env["TERM"] = "xterm-256color"
                     env["COLORTERM"] = "truecolor"

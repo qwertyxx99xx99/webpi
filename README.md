@@ -13,6 +13,12 @@ workspace under `/tmp/webpi-workspaces`.
 Pi defaults to the bundled `exa-direct` provider using
 `google/gemini-2.5-flash`. No API key is required by that extension.
 
+Interactive startup is intentionally verbose: Pi shows its normal header,
+loaded global context, and the Exa extension. Global instructions establish
+safe hosted-workspace defaults, project-local executable resources are not
+trusted automatically, and session files remain inside each connection's
+private temporary workspace.
+
 The app intentionally pins Streamlit 1.50 because the WebSocket bridge hooks
 its Tornado server. Test that integration before upgrading Streamlit.
 
