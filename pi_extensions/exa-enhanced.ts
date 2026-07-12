@@ -217,10 +217,10 @@ function buildToolTypes(context: Context): TypeBuilder {
     actions.push(callClass.type());
   }
 
-  actions.push(tb.FinalAnswer.type());
+  actions.push(tb.TextResponse.type());
   tb.DynamicDecision
     .addProperty("actions", tb.list(tb.union(actions)))
-    .description("Select one or more independent tool calls, or exactly one final answer.");
+    .description("Select one or more independent tool calls, or exactly one text response.");
   return tb;
 }
 
@@ -361,7 +361,7 @@ function streamExaBaml(
               "BAML failed to parse both the original and repaired responses",
             );
           }
-          parsed = { actions: [{ tool: "final", content: modelText }] };
+          parsed = { actions: [{ type: "text", text: modelText }] };
         }
       }
 
@@ -369,20 +369,21 @@ function streamExaBaml(
       const actions = parsed.actions;
       if (!Array.isArray(actions) || actions.length === 0)
         throw new Error("BAML returned no actions");
-      if (!actions.every((action: unknown) =>
-        isPlainObject(action) && typeof action.tool === "string"
-      )) throw new Error("BAML returned an invalid action");
+      if (!actions.every(isPlainObject))
+        throw new Error("BAML returned an invalid action");
 
-      const finalActions = actions.filter((action: any) => action.tool === "final");
-      if (finalActions.length) {
+      const textActions = actions.filter((action: any) => action.type === "text");
+      if (textActions.length) {
         if (actions.length !== 1)
-          throw new Error("BAML combined a final answer with tool calls");
-        const finalAction = finalActions[0];
-        if (typeof finalAction.content !== "string")
-          throw new Error("BAML returned a final action without text content");
-        emitTextResult(stream, output, finalAction.content);
+          throw new Error("BAML combined a text response with tool calls");
+        const textAction = textActions[0];
+        if (typeof textAction.text !== "string")
+          throw new Error("BAML returned a text response without text");
+        emitTextResult(stream, output, textAction.text);
       } else {
         for (const action of actions) {
+          if (typeof action.tool !== "string")
+            throw new Error("BAML returned a tool call without a tool name");
           if (!context.tools?.some((tool: any) => tool.name === action.tool))
             throw new Error(`BAML selected unavailable tool: ${action.tool}`);
           if (!isPlainObject(action.arguments))

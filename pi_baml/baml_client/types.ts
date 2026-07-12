@@ -52,8 +52,8 @@ export interface DynamicDecision {
   [key: string]: any;
 }
 
-export interface FinalAnswer {
-  tool: "final"
-  content: string
+export interface TextResponse {
+  type: "text"
+  text: string
 
 }

@@ -29,14 +29,14 @@ export default class TypeBuilder {
 
     DynamicDecision: ClassBuilder<'DynamicDecision'>;
 
-    FinalAnswer: ClassViewer<'FinalAnswer', "tool" | "content">;
+    TextResponse: ClassViewer<'TextResponse', "type" | "text">;
 
 
 
     constructor() {
         this.tb = new _TypeBuilder({
           classes: new Set([
-            "DynamicDecision","FinalAnswer",
+            "DynamicDecision","TextResponse",
           ]),
           enums: new Set([
 
@@ -48,8 +48,8 @@ export default class TypeBuilder {
 
         ]);
 
-        this.FinalAnswer = this.tb.classViewer("FinalAnswer", [
-          "tool","content",
+        this.TextResponse = this.tb.classViewer("TextResponse", [
+          "type","text",
         ]);
 
 

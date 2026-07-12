@@ -20,7 +20,7 @@ $ pnpm add @boundaryml/baml
 
 import type { Image, Audio, Pdf, Video } from "@boundaryml/baml"
 import type { Checked, Check } from "./types.js"
-import type {  DynamicDecision,  FinalAnswer } from "./types.js"
+import type {  DynamicDecision,  TextResponse } from "./types.js"
 import type * as types from "./types.js"
 
 /******************************************************************************
@@ -39,8 +39,8 @@ export namespace partial_types {
     export interface DynamicDecision {
       [key: string]: any;
     }
-    export interface FinalAnswer {
-      tool?: "final" | null
-      content?: string | null
+    export interface TextResponse {
+      type?: "text" | null
+      text?: string | null
     }
 }
