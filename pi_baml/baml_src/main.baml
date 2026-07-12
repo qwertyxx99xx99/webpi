@@ -14,7 +14,8 @@ class DynamicDecision {
   @@dynamic
 }
 
-function NextAction(context: string) -> DynamicDecision {
+function NextAction(context: string) -> DynamicDecision
+  @assert(nonempty_actions, {{ this.actions|length > 0 }}) {
   client "openai/gpt-4o-mini"
   prompt #"
     You are the decision layer for the Pi coding agent. Continue the supplied
