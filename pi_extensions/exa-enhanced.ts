@@ -16,30 +16,28 @@ import { fromMarkdown } from "mdast-util-from-markdown";
 const EXA_ENDPOINT = "https://demos.exa.ai/chatbot-demo/api/chat/stream";
 const UPSTREAM_MODEL = "google/gemini-2.5-flash";
 
-function contentToText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return String(content ?? "");
-  return content
-    .map((part: any) => {
-      if (part?.type === "text") return part.text || "";
-      if (part?.type === "thinking") return part.thinking || "";
-      if (part?.type === "toolCall")
-        return `[already executed tool call ${part.name}: ${JSON.stringify(part.arguments || {})}]`;
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n");
-}
-
 function contextToText(context: Context): string {
-  const sections: string[] = [];
-  if (context.systemPrompt) sections.push(`SYSTEM:\n${context.systemPrompt}`);
-  for (const message of context.messages) {
-    const role = String(message.role || "user").toUpperCase();
-    const text = contentToText(message.content);
-    sections.push(`${role}:\n${text}`);
-  }
-  return sections.join("\n\n");
+  const messages = context.messages.map((message) => {
+    const content = typeof message.content === "string"
+      ? message.content
+      : message.content
+          .map((part: any) =>
+            part.type === "text" ? part.text
+            : part.type === "thinking" ? part.thinking
+            : part.type === "toolCall"
+              ? `[already executed tool call ${part.name}: ${JSON.stringify(part.arguments || {})}]`
+              : ""
+          )
+          .filter(Boolean)
+          .join("\n");
+
+    return `${String(message.role || "user").toUpperCase()}:\n${content}`;
+  });
+
+  return [
+    context.systemPrompt && `SYSTEM:\n${context.systemPrompt}`,
+    ...messages,
+  ].filter(Boolean).join("\n\n");
 }
 
 function renderedPrompt(body: any): string {
