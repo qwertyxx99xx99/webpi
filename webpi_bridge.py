@@ -185,6 +185,13 @@ def _write_agent_config() -> None:
     fd_alias = agent_bin / "fd"
     if fdfind and not fd_alias.exists():
         fd_alias.symlink_to(fdfind)
+    pi_wrapper = agent_bin / "pi"
+    pi_wrapper.write_text(
+        "#!/usr/bin/env bash\n"
+        f'exec "{RUNTIME_DIR / "node_modules" / ".bin" / "pi"}" '
+        f'--provider "{EXA_PROVIDER}" --model "{EXA_MODEL}" "$@"\n'
+    )
+    pi_wrapper.chmod(0o700)
     extensions = AGENT_DIR / "extensions"
     extensions.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "pi_extensions" / "exa-direct.ts", extensions / "exa-direct.ts")
@@ -575,9 +582,10 @@ def _make_handler():
                     if (NODE_DIR / "bin").exists():
                         env["PATH"] = f"{NODE_DIR / 'bin'}:{env.get('PATH', '')}"
                     env["PATH"] = f"{RUNTIME_DIR / 'node_modules' / '.bin'}:{env.get('PATH', '')}"
-                    env["WEBPI_PI_COMMAND"] = pi_command
-                    env["WEBPI_PI_PROVIDER"] = EXA_PROVIDER
-                    env["WEBPI_PI_MODEL"] = EXA_MODEL
+                    # Keep WebPi's wrapper first so `pi` from Bash retains the
+                    # configured provider, model, and global agent directory.
+                    env["PATH"] = f"{AGENT_DIR / 'bin'}:{env.get('PATH', '')}"
+                    env["WEBPI_PI_COMMAND"] = str(AGENT_DIR / "bin" / "pi")
                     os.execvpe(
                         "/bin/bash",
                         [
@@ -586,8 +594,7 @@ def _make_handler():
                             "--norc",
                             "-i",
                             "-c",
-                            '"$WEBPI_PI_COMMAND" --provider "$WEBPI_PI_PROVIDER" '
-                            '--model "$WEBPI_PI_MODEL"; '
+                            '"$WEBPI_PI_COMMAND"; '
                             "exec /bin/bash --noprofile --norc -i",
                         ],
                         env,

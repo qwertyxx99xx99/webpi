@@ -285,6 +285,10 @@ Run Pi again at any time:
 pi
 ```
 
+This `pi` command is WebPi's wrapper around the pinned CLI. It automatically
+reapplies the bundled agent directory, Exa provider, and default model, so the
+reopened session has the same configuration as initial startup.
+
 Closing the browser tab ends the terminal connection; exiting Pi does not.
 
 ## Keyboard essentials
