@@ -1,6 +1,7 @@
 import asyncio
 import errno
 import fcntl
+import mimetypes
 import os
 import pathlib
 import pty
@@ -14,6 +15,8 @@ import tempfile
 import threading
 import termios
 import time
+import secrets
+from urllib.parse import urlparse
 
 
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -27,6 +30,9 @@ EXA_PROVIDER = "exa-direct"
 EXA_MODEL = "google/gemini-2.5-flash"
 _INSTALL_LOCK = threading.Lock()
 _PATCHED = False
+_PUBLIC_ROOTS: dict[str, pathlib.Path] = {}
+_PUBLIC_ROOTS_LOCK = threading.Lock()
+_MAX_PUBLIC_FILE_BYTES = 25 * 1024 * 1024
 
 
 def _node_major(command: str) -> int:
@@ -142,6 +148,19 @@ def _new_workspace() -> pathlib.Path:
     (workspace / "README.md").write_text(
         "# WebPi workspace\n\nThis isolated workspace belongs to one browser terminal session.\n"
     )
+    public = workspace / "public"
+    public.mkdir(mode=0o700)
+    (public / "index.html").write_text(
+        """<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WebPi Preview</title></head>
+<body style="font-family:system-ui;max-width:720px;margin:4rem auto;padding:0 1rem">
+  <h1>WebPi public folder</h1>
+  <p>Replace <code>public/index.html</code> to publish your page.</p>
+</body>
+</html>
+"""
+    )
     return workspace
 
 
@@ -153,12 +172,51 @@ def _resize(fd: int, rows: int, cols: int) -> None:
 
 def _make_handler():
     import tornado.ioloop
+    import tornado.web
     import tornado.websocket
+
+    class PublicFileHandler(tornado.web.RequestHandler):
+        def get(self, token: str, requested_path: str = ""):
+            with _PUBLIC_ROOTS_LOCK:
+                public_root = _PUBLIC_ROOTS.get(token)
+            if public_root is None:
+                raise tornado.web.HTTPError(404)
+
+            root = public_root.resolve()
+            relative = requested_path.strip("/") or "index.html"
+            candidate = (root / relative).resolve()
+            try:
+                candidate.relative_to(root)
+            except ValueError:
+                raise tornado.web.HTTPError(403) from None
+            if candidate.is_dir():
+                candidate = (candidate / "index.html").resolve()
+            if not candidate.is_file():
+                raise tornado.web.HTTPError(404)
+            try:
+                if candidate.stat().st_size > _MAX_PUBLIC_FILE_BYTES:
+                    raise tornado.web.HTTPError(413)
+                content = candidate.read_bytes()
+            except OSError:
+                raise tornado.web.HTTPError(404) from None
+
+            content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+            if content_type.startswith("text/") or content_type in {
+                "application/javascript",
+                "application/json",
+                "image/svg+xml",
+            }:
+                content_type += "; charset=utf-8"
+            self.set_header("Content-Type", content_type)
+            self.set_header("Cache-Control", "no-store")
+            self.set_header("X-Content-Type-Options", "nosniff")
+            self.write(content)
 
     class PiTerminalHandler(tornado.websocket.WebSocketHandler):
         pid = None
         fd = None
         workspace = None
+        public_token = None
 
         def check_origin(self, origin: str) -> bool:
             # Streamlit components are same-origin iframes. Reject cross-site
@@ -173,6 +231,18 @@ def _make_handler():
             try:
                 pi_command = await asyncio.to_thread(ensure_pi_runtime)
                 self.workspace = _new_workspace()
+                self.public_token = secrets.token_urlsafe(24)
+                with _PUBLIC_ROOTS_LOCK:
+                    _PUBLIC_ROOTS[self.public_token] = self.workspace / "public"
+                supplied_base = self.get_query_argument("public_base", "")
+                parsed_base = urlparse(supplied_base)
+                if (
+                    parsed_base.scheme not in {"http", "https"}
+                    or parsed_base.netloc != self.request.host
+                ):
+                    scheme = self.request.headers.get("X-Forwarded-Proto", self.request.protocol)
+                    supplied_base = f"{scheme}://{self.request.host}/webpi/public/"
+                public_url = f"{supplied_base.rstrip('/')}/{self.public_token}/"
                 initial_cols = max(1, min(int(self.get_query_argument("cols", "100")), 500))
                 initial_rows = max(1, min(int(self.get_query_argument("rows", "30")), 200))
                 pid, fd = pty.fork()
@@ -186,6 +256,8 @@ def _make_handler():
                     session_dir = self.workspace / ".pi-sessions"
                     session_dir.mkdir(mode=0o700)
                     env["PI_CODING_AGENT_SESSION_DIR"] = str(session_dir)
+                    env["WEBPI_PUBLIC_DIR"] = str(self.workspace / "public")
+                    env["WEBPI_PUBLIC_URL"] = public_url
                     env["PI_TELEMETRY"] = "0"
                     env["TERM"] = "xterm-256color"
                     env["COLORTERM"] = "truecolor"
@@ -249,6 +321,10 @@ def _make_handler():
                 return
 
         def on_close(self):
+            if self.public_token:
+                with _PUBLIC_ROOTS_LOCK:
+                    _PUBLIC_ROOTS.pop(self.public_token, None)
+                self.public_token = None
             if self.fd is not None:
                 try:
                     tornado.ioloop.IOLoop.current().remove_handler(self.fd)
@@ -263,7 +339,7 @@ def _make_handler():
                     pass
                 self.pid = None
 
-    return PiTerminalHandler
+    return PiTerminalHandler, PublicFileHandler
 
 
 def install_streamlit_websocket_route() -> None:
@@ -274,11 +350,18 @@ def install_streamlit_websocket_route() -> None:
     from streamlit.web.server.server import Server
 
     original = Server._create_app
-    handler = _make_handler()
+    terminal_handler, public_file_handler = _make_handler()
 
     def create_app_with_webpi(self):
         app = original(self)
-        app.add_handlers(r".*$", [(r"/webpi/terminal", handler)])
+        app.add_handlers(
+            r".*$",
+            [
+                (r"/webpi/terminal", terminal_handler),
+                (r"/webpi/public/([^/]+)/(.*)", public_file_handler),
+                (r"/webpi/public/([^/]+)/?", public_file_handler),
+            ],
+        )
         return app
 
     Server._create_app = create_app_with_webpi

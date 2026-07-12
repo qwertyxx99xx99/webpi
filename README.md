@@ -39,6 +39,8 @@ cursor movement, and responsive terminal resizing.
   `0700` directory under `/tmp/webpi-workspaces`.
 - **Fresh session storage** — Pi transcripts stay inside that connection's
   temporary workspace.
+- **Instant static publishing** — files written to `public/` are served at the
+  session-specific URL in `$WEBPI_PUBLIC_URL`, with no localhost server needed.
 - **Reproducible runtime** — Streamlit bootstraps Node `22.19.0`, Pi `0.80.6`,
   `ripgrep`, and `fd-find` when the app environment is created.
 - **Normal interactive startup** — Pi displays its standard header, loaded
@@ -55,6 +57,7 @@ Browser
                       └─ Pi CLI
                            ├─ Exa Direct provider
                            ├─ isolated temporary workspace
+                           ├─ public/ static file route
                            └─ read / bash / edit / write tools
 ```
 
@@ -115,6 +118,31 @@ The configuration follows Pi's documented interactive defaults:
 
 See the official [Pi documentation](https://pi.dev/docs/latest) for commands,
 keybindings, extensions, skills, sessions, and configuration.
+
+## Publish HTML, CSS, and JavaScript
+
+Each terminal begins with a `public/` folder and two environment variables:
+
+```bash
+echo "$WEBPI_PUBLIC_DIR"
+echo "$WEBPI_PUBLIC_URL"
+```
+
+Write static files there and open the URL Pi reports:
+
+```bash
+cat > public/index.html <<'HTML'
+<!doctype html>
+<h1>Hello from WebPi</h1>
+HTML
+
+echo "$WEBPI_PUBLIC_URL"
+```
+
+Paths map directly: `public/assets/app.css` is available at
+`$WEBPI_PUBLIC_URL/assets/app.css`. Use relative asset URLs because every
+terminal receives a unique, unguessable URL prefix. Hosting remains active only
+while that terminal's WebSocket is connected.
 
 ## Keyboard essentials
 

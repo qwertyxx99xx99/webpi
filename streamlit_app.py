@@ -66,6 +66,7 @@ terminal_html = """
     fit.fit();
     socketUrl.searchParams.set('cols', term.cols);
     socketUrl.searchParams.set('rows', term.rows);
+    socketUrl.searchParams.set('public_base', new URL('webpi/public/', parentUrl).href);
     const ws = new WebSocket(socketUrl);
     ws.binaryType = 'arraybuffer';
     const resize = () => {
