@@ -11,7 +11,6 @@ import { b } from "../baml_exa/baml_client/index.ts";
 import TypeBuilder, {
   type FieldType,
 } from "../baml_exa/baml_client/type_builder.ts";
-import { fromMarkdown } from "mdast-util-from-markdown";
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -80,48 +79,6 @@ function renderedPrompt(body: any): string {
       return `${String(message?.role || "user").toUpperCase()}:\n${content}`;
     })
     .join("\n\n");
-}
-
-function exaStreamText(raw: string): string {
-  let text = "";
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("data:")) continue;
-    const payload = trimmed.slice(5).trim();
-    if (!payload || payload === "[DONE]") continue;
-    try {
-      const event = JSON.parse(payload);
-      if (typeof event.content === "string") text += event.content;
-    } catch {
-      // Ignore keepalives and non-content metadata.
-    }
-  }
-  return text;
-}
-
-function stripExaFollowups(text: string): string {
-  const tree: any = fromMarkdown(text);
-  const ranges: Array<[number, number]> = [];
-
-  function visit(node: any): void {
-    if (
-      node?.type === "code" &&
-      String(node.lang || "").toLowerCase() === "followups" &&
-      Number.isInteger(node.position?.start?.offset) &&
-      Number.isInteger(node.position?.end?.offset)
-    ) {
-      ranges.push([node.position.start.offset, node.position.end.offset]);
-      return;
-    }
-    if (Array.isArray(node?.children)) node.children.forEach(visit);
-  }
-
-  visit(tree);
-  let cleaned = text;
-  for (const [start, end] of ranges.sort((a, b) => b[0] - a[0])) {
-    cleaned = cleaned.slice(0, start) + cleaned.slice(end);
-  }
-  return cleaned.trim();
 }
 
 function safeTypeName(value: string): string {
@@ -259,9 +216,51 @@ async function askExa(prompt: string, signal?: AbortSignal): Promise<string> {
       searchType: "instant",
     }),
   });
-  const raw = await response.text();
-  if (!response.ok) throw new Error(`Exa upstream ${response.status}: ${raw.slice(0, 500)}`);
-  const text = exaStreamText(raw);
+  if (!response.ok) {
+    const raw = await response.text();
+    throw new Error(`Exa upstream ${response.status}: ${raw.slice(0, 500)}`);
+  }
+  if (!response.body) throw new Error("Exa returned no response stream");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  let text = "";
+
+  function consume(line: string): boolean {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) return false;
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === "[DONE]") return false;
+    try {
+      const event = JSON.parse(payload);
+      if (typeof event.content !== "string") return false;
+      text += event.content;
+      const marker = text.search(/```followups\b/i);
+      if (marker >= 0) {
+        text = text.slice(0, marker).trimEnd();
+        return true;
+      }
+    } catch {
+      // Ignore keepalives and non-content metadata.
+    }
+    return false;
+  }
+
+  while (true) {
+    const { done, value } = await reader.read();
+    pending += decoder.decode(value, { stream: !done });
+    const lines = pending.split("\n");
+    pending = done ? "" : lines.pop() || "";
+    for (const line of lines) {
+      if (consume(line)) {
+        await reader.cancel();
+        return text;
+      }
+    }
+    if (done) break;
+  }
+  if (pending) consume(pending);
   if (!text) throw new Error("Exa returned no assistant content");
   return text;
 }
@@ -356,9 +355,8 @@ function streamExaBaml(
       });
       const prompt = renderedPrompt(request.body.json());
       throwIfAborted(options?.signal);
-      const rawText = await askExa(prompt, options?.signal);
+      const modelText = await askExa(prompt, options?.signal);
       throwIfAborted(options?.signal);
-      const modelText = stripExaFollowups(rawText);
       let parsed: any;
       try {
         parsed = b.parse.NextAction(modelText, {

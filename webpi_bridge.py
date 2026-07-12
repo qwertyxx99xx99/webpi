@@ -57,7 +57,6 @@ RCLONE_BUILDS = {
 EXA_PROVIDER = "exa-enhanced"
 EXA_MODEL = "google/gemini-2.5-flash"
 BAML_VERSION = "0.223.0"
-MDAST_VERSION = "2.0.2"
 _INSTALL_LOCK = threading.Lock()
 _RCLONE_INSTALL_LOCK = threading.Lock()
 _RCLONE_SYNC_LOCK = threading.Lock()
@@ -239,15 +238,14 @@ def ensure_pi_runtime() -> str:
     """Install an isolated Node/Pi runtime and return the Pi executable."""
     runtime_pi = RUNTIME_DIR / "node_modules" / ".bin" / "pi"
     baml_runtime = RUNTIME_DIR / "node_modules" / "@boundaryml" / "baml" / "package.json"
-    mdast_runtime = RUNTIME_DIR / "node_modules" / "mdast-util-from-markdown" / "package.json"
     isolated_node = NODE_DIR / "bin" / "node"
-    runtime_ready = runtime_pi.exists() and baml_runtime.exists() and mdast_runtime.exists()
+    runtime_ready = runtime_pi.exists() and baml_runtime.exists()
     if runtime_ready and isolated_node.exists() and _node_major(str(isolated_node)) >= 22:
         _write_agent_config()
         return str(runtime_pi)
 
     with _INSTALL_LOCK:
-        runtime_ready = runtime_pi.exists() and baml_runtime.exists() and mdast_runtime.exists()
+        runtime_ready = runtime_pi.exists() and baml_runtime.exists()
         if runtime_ready and isolated_node.exists() and _node_major(str(isolated_node)) >= 22:
             _write_agent_config()
             return str(runtime_pi)
@@ -284,7 +282,6 @@ def ensure_pi_runtime() -> str:
                 "--no-fund",
                 f"@earendil-works/pi-coding-agent@{PI_VERSION}",
                 f"@boundaryml/baml@{BAML_VERSION}",
-                f"mdast-util-from-markdown@{MDAST_VERSION}",
             ],
             check=True,
             env=install_env,
