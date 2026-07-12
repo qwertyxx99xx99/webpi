@@ -4,7 +4,7 @@
 
 **Pi coding agent, directly in your browser.**
 
-[![Live app](https://img.shields.io/badge/Live-webpie.streamlit.app-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://webpie.streamlit.app/)
+[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://webpie.streamlit.app/)
 [![Pi](https://img.shields.io/badge/Pi-v0.80.6-8ABEB7?style=for-the-badge)](https://pi.dev/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.50-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](#license)
