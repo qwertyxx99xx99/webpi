@@ -9,6 +9,7 @@ import select
 import shutil
 import signal
 import socket
+import string
 import struct
 import subprocess
 import sys
@@ -36,6 +37,7 @@ _PUBLIC_ROOTS_LOCK = threading.Lock()
 _PROXY_TARGETS: dict[str, tuple[int, str]] = {}
 _PROXY_TARGETS_LOCK = threading.Lock()
 _MAX_PUBLIC_FILE_BYTES = 25 * 1024 * 1024
+_TOKEN_ALPHABET = string.ascii_lowercase + string.digits
 _HOP_BY_HOP_HEADERS = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailer", "transfer-encoding", "upgrade",
@@ -339,7 +341,9 @@ def _make_handler():
             try:
                 pi_command = await asyncio.to_thread(ensure_pi_runtime)
                 self.workspace = _new_workspace()
-                self.public_token = secrets.token_urlsafe(24)
+                self.public_token = "".join(
+                    secrets.choice(_TOKEN_ALPHABET) for _ in range(32)
+                )
                 self.proxy_port = _available_local_port()
                 with _PUBLIC_ROOTS_LOCK:
                     _PUBLIC_ROOTS[self.public_token] = self.workspace / "public"

@@ -183,7 +183,8 @@ echo "$WEBPI_PROXY_URL"
 The public URL forwards GET, POST, PUT, PATCH, DELETE, OPTIONS, request bodies,
 query strings, responses, and redirects to that session's assigned localhost
 port. Use relative browser asset paths because the URL contains a session
-prefix. WebSocket upgrades and hot-module reload are not currently supported.
+prefix. Session tokens contain only lowercase letters and digits. WebSocket
+upgrades and hot-module reload are not currently supported.
 The server and URL stop when the terminal disconnects or the app restarts.
 
 ## Keyboard essentials
