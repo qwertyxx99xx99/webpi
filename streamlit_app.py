@@ -3,7 +3,7 @@ import html
 import streamlit as st
 import streamlit.components.v1 as components
 
-from webpi_bridge import ensure_pi_runtime
+from webpi_bridge import configure_rclone_secret, ensure_pi_runtime
 
 
 st.set_page_config(
@@ -26,6 +26,7 @@ st.markdown(
 )
 
 try:
+    configure_rclone_secret(st.secrets.get("RCLONE_CONFIG_CONTENT", ""))
     ensure_pi_runtime()
 except Exception as exc:
     st.error(f"Unable to prepare Pi: {exc}")

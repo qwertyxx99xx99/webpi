@@ -1,7 +1,8 @@
 # Bump this marker with webpi-bootstrap changes so Streamlit Cloud rebuilds
 # its cached environment and wheel.
-# webpi-bootstrap=0.4.1
+# webpi-bootstrap=0.5.0
 .
 streamlit==1.50.0
 nodeenv==1.9.1
 tornado==6.5.2
+watchdog==6.0.0

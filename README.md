@@ -189,8 +189,14 @@ The server and URL stop when the terminal disconnects or the app restarts.
 
 ## Proton Drive experiments
 
-WebPi includes a checksum-verified rclone binary with Proton Drive support and
-prepares private per-session locations:
+WebPi includes a checksum-verified rclone binary with Proton Drive support.
+When `RCLONE_CONFIG_CONTENT` is present in Streamlit Secrets, WebPi restores the
+login automatically and keeps Proton Drive synchronized with `/tmp/webpi-proton`
+(available as `$RCLONE_MOUNT_DIR`). It downloads the drive once when the app
+starts, then a filesystem listener mirrors individual local creates, changes,
+moves, and deletions back to Proton without periodic scans.
+
+The relevant paths are:
 
 ```bash
 echo "$RCLONE_CONFIG"
@@ -199,8 +205,8 @@ echo "$RCLONE_CACHE_DIR"
 echo "$RCLONE_LOG_DIR"
 ```
 
-Pi's `!` commands are non-interactive, so create the remote without the rclone
-menu. First obscure the password on a trusted local machine:
+Pi's `!` commands are non-interactive. To create a new remote, first obscure the
+password on a machine with rclone:
 
 ```bash
 read -s -p 'Proton password: ' PROTON_PASSWORD; printf '\n'
@@ -215,21 +221,20 @@ Copy the resulting obscured value, then run this in WebPi with your values:
 !rclone lsd proton:
 ```
 
-The obscured value is reversible and must still be treated as a credential.
-Then try mounting the configured remote:
+Copy the generated `rclone.conf` into Streamlit Secrets as:
 
-```bash
-rclone mount proton: "$RCLONE_MOUNT_DIR" \
-  --vfs-cache-mode writes \
-  --cache-dir "$RCLONE_CACHE_DIR" \
-  --log-file "$RCLONE_LOG_DIR/mount.log" \
-  --daemon
+```toml
+RCLONE_CONFIG_CONTENT = """
+[proton]
+type = protondrive
+username = YOUR_PROTON_USERNAME
+password = OBSCURED_PASSWORD
+"""
 ```
 
-Community Cloud may deny FUSE mounts. If that happens, use `rclone copy`
-instead. Configuration and files are ephemeral and disappear with the session;
-never print or publish the rclone config because its obscured password is
-reversible.
+The local copy is ephemeral across app reboots, but WebPi downloads it again
+from Proton automatically. The obscured password in the configuration is
+reversible and should not be published.
 
 ## Keyboard essentials
 

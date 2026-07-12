@@ -24,6 +24,9 @@ import urllib.request
 import zipfile
 from urllib.parse import urlparse
 
+from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
+
 
 ROOT = pathlib.Path(__file__).resolve().parent
 RUNTIME_DIR = pathlib.Path("/tmp/webpi-pi-runtime")
@@ -31,6 +34,8 @@ NODE_DIR = pathlib.Path("/tmp/webpi-node")
 AGENT_DIR = pathlib.Path("/tmp/webpi-agent")
 TOOLS_DIR = pathlib.Path("/tmp/webpi-tools")
 WORKSPACE_ROOT = pathlib.Path("/tmp/webpi-workspaces")
+RCLONE_STATE_DIR = pathlib.Path("/tmp/webpi-rclone")
+RCLONE_SYNC_DIR = pathlib.Path("/tmp/webpi-proton")
 PI_VERSION = "0.80.6"
 NODE_VERSION = "22.19.0"
 RCLONE_VERSION = "1.74.3"
@@ -52,6 +57,8 @@ EXA_PROVIDER = "exa-direct"
 EXA_MODEL = "google/gemini-2.5-flash"
 _INSTALL_LOCK = threading.Lock()
 _RCLONE_INSTALL_LOCK = threading.Lock()
+_RCLONE_SYNC_LOCK = threading.Lock()
+_RCLONE_SYNC_STARTED = False
 _PATCHED = False
 _PUBLIC_ROOTS: dict[str, pathlib.Path] = {}
 _PUBLIC_ROOTS_LOCK = threading.Lock()
@@ -63,6 +70,93 @@ _HOP_BY_HOP_HEADERS = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailer", "transfer-encoding", "upgrade",
 }
+
+
+def configure_rclone_secret(config_content: str) -> None:
+    """Restore the shared rclone config supplied through Streamlit Secrets."""
+    if not config_content.strip():
+        return
+    RCLONE_STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    config_path = RCLONE_STATE_DIR / "rclone.conf"
+    config_path.write_text(config_content.rstrip() + "\n")
+    config_path.chmod(0o600)
+    RCLONE_SYNC_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    (RCLONE_STATE_DIR / "cache" / "proton").mkdir(
+        parents=True, exist_ok=True, mode=0o700
+    )
+    (RCLONE_STATE_DIR / "logs").mkdir(parents=True, exist_ok=True, mode=0o700)
+    _start_rclone_sync()
+
+
+def _start_rclone_sync() -> None:
+    global _RCLONE_SYNC_STARTED
+    with _RCLONE_SYNC_LOCK:
+        if _RCLONE_SYNC_STARTED:
+            return
+        _RCLONE_SYNC_STARTED = True
+        threading.Thread(target=_rclone_sync_loop, daemon=True).start()
+
+
+def _rclone_sync_loop() -> None:
+    """Download once, then mirror individual local filesystem changes."""
+    try:
+        rclone = ensure_rclone_runtime()
+    except Exception:
+        return
+    log_path = RCLONE_STATE_DIR / "logs" / "sync.log"
+    common = [
+        "--config", str(RCLONE_STATE_DIR / "rclone.conf"),
+        "--log-file", str(log_path), "--log-level", "NOTICE",
+    ]
+
+    def run(*args: str) -> None:
+        try:
+            subprocess.run(
+                [rclone, *args, *common],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=300,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            pass
+
+    # Proton is the source of truth only when this app process starts.
+    run("copy", "proton:", str(RCLONE_SYNC_DIR), "--update", "--create-empty-src-dirs")
+
+    class UploadHandler(FileSystemEventHandler):
+        def remote_path(self, path: str) -> str:
+            relative = pathlib.Path(path).relative_to(RCLONE_SYNC_DIR).as_posix()
+            return f"proton:{relative}"
+
+        def on_created(self, event) -> None:
+            if event.is_directory:
+                run("mkdir", self.remote_path(event.src_path))
+            else:
+                self.upload(event.src_path)
+
+        def on_modified(self, event) -> None:
+            if not event.is_directory:
+                self.upload(event.src_path)
+
+        def on_deleted(self, event) -> None:
+            command = "purge" if event.is_directory else "deletefile"
+            run(command, self.remote_path(event.src_path))
+
+        def on_moved(self, event) -> None:
+            run("moveto", self.remote_path(event.src_path), self.remote_path(event.dest_path))
+
+        def upload(self, path: str) -> None:
+            # Editors often emit several writes for one save. A short delay lets
+            # the write settle; rclone skips the transfer if it is unchanged.
+            time.sleep(0.4)
+            if pathlib.Path(path).is_file():
+                run("copyto", path, self.remote_path(path))
+
+    observer = Observer()
+    observer.schedule(UploadHandler(), str(RCLONE_SYNC_DIR), recursive=True)
+    observer.start()
+    observer.join()
 
 
 def _node_major(command: str) -> int:
@@ -232,10 +326,6 @@ def _new_workspace() -> pathlib.Path:
     )
     public = workspace / "public"
     public.mkdir(mode=0o700)
-    (workspace / "proton").mkdir(mode=0o755)
-    (workspace / ".rclone" / "config").mkdir(parents=True, mode=0o700)
-    (workspace / ".rclone-cache" / "proton").mkdir(parents=True, mode=0o700)
-    (workspace / ".rclone-logs").mkdir(mode=0o700)
     (public / "index.html").write_text(
         """<!doctype html>
 <html lang="en">
@@ -464,14 +554,10 @@ def _make_handler():
                     env["WEBPI_PORT"] = str(self.proxy_port)
                     env["PORT"] = str(self.proxy_port)
                     env["WEBPI_PROXY_URL"] = proxy_url
-                    env["RCLONE_CONFIG"] = str(
-                        self.workspace / ".rclone" / "config" / "rclone.conf"
-                    )
-                    env["RCLONE_MOUNT_DIR"] = str(self.workspace / "proton")
-                    env["RCLONE_CACHE_DIR"] = str(
-                        self.workspace / ".rclone-cache" / "proton"
-                    )
-                    env["RCLONE_LOG_DIR"] = str(self.workspace / ".rclone-logs")
+                    env["RCLONE_CONFIG"] = str(RCLONE_STATE_DIR / "rclone.conf")
+                    env["RCLONE_MOUNT_DIR"] = str(RCLONE_SYNC_DIR)
+                    env["RCLONE_CACHE_DIR"] = str(RCLONE_STATE_DIR / "cache" / "proton")
+                    env["RCLONE_LOG_DIR"] = str(RCLONE_STATE_DIR / "logs")
                     env["PI_TELEMETRY"] = "0"
                     env["TERM"] = "xterm-256color"
                     env["COLORTERM"] = "truecolor"

@@ -15,6 +15,23 @@ You are running interactively in a temporary, isolated WebPi workspace.
 - Keep responses concise and report what changed, validation performed, and any
   remaining limitation.
 
+## Persistent work
+
+The normal session workspace is temporary. `$RCLONE_MOUNT_DIR` is the shared,
+automatically synchronized Proton Drive directory.
+
+- Whenever the user says a task, project, file, or other work must persist,
+  create or locate its directory below `$RCLONE_MOUNT_DIR` and perform the work
+  there instead of in the temporary session workspace.
+- Treat phrases such as "save this", "keep this", "continue later", "must
+  persist", or "do not lose this on restart" as explicit requests for persistent
+  storage unless the user provides another persistent destination.
+- Before starting persistent work, tell the user the chosen directory. Use a
+  clear project subdirectory rather than placing unrelated files at the root.
+- Existing persistent projects should be reopened from `$RCLONE_MOUNT_DIR`.
+- For a persistent static website, keep its source under `$RCLONE_MOUNT_DIR` and
+  copy the files to `$WEBPI_PUBLIC_DIR` when the user wants a live preview.
+
 ## Publishing files
 
 The current workspace contains a `public/` directory that WebPi exposes over
@@ -56,8 +73,14 @@ must run as a server. Prefer `public/` for purely static sites.
 
 ## Proton Drive with rclone
 
-WebPi includes a pinned rclone binary with Proton Drive support. Configuration,
-mount, cache, and logs are private to this temporary terminal session.
+WebPi includes a pinned rclone binary with Proton Drive support. When configured
+by the deployment, login state and the local Proton sync directory are shared
+across terminal sessions in the same running app instance.
+
+- Use `$RCLONE_MOUNT_DIR` like an ordinary local directory. WebPi downloads
+  Proton Drive once when the app starts, then watches this directory and mirrors
+  individual creates, modifications, moves, and deletions back to Proton.
+- Do not start another rclone sync or mount process for this directory.
 
 - Pi's `!` and bash tools are non-interactive. Never tell the user to run the
   interactive `rclone config` menu inside WebPi.
@@ -65,13 +88,10 @@ mount, cache, and logs are private to this temporary terminal session.
   use rclone's non-interactive command:
   `rclone config create proton protondrive username USERNAME password OBSCURED_PASSWORD`.
   Treat both values as sensitive and never echo or read the resulting config.
-- The prepared mount directory is `$RCLONE_MOUNT_DIR`, the VFS cache is
+- `$RCLONE_MOUNT_DIR` is the shared `/tmp/webpi-proton` sync directory, the VFS cache is
   `$RCLONE_CACHE_DIR`, and logs belong under `$RCLONE_LOG_DIR`.
-- To try a FUSE mount, run:
-  `rclone mount proton: "$RCLONE_MOUNT_DIR" --vfs-cache-mode writes --cache-dir "$RCLONE_CACHE_DIR" --log-file "$RCLONE_LOG_DIR/mount.log" --daemon`.
-- Streamlit Cloud may deny access to `/dev/fuse`. If mounting fails with a
-  permission or operation-not-permitted error, use `rclone copy` between the
-  remote and a normal workspace directory instead.
+- Streamlit Cloud has no FUSE device. Do not attempt `rclone mount`; use the
+  automatically synchronized local directory instead.
 - Never print, read back, or expose `$RCLONE_CONFIG`; it contains reversible
-  credentials. The configuration and mount disappear when the session or app
-  restarts.
+  credentials. The deployment restores it from Streamlit Secrets after an app
+  restart.
