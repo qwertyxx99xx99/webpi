@@ -193,6 +193,7 @@ Each session receives a dedicated loopback address and public proxy URL:
 echo "$WEBPI_HOST:$WEBPI_PORT"
 echo "$WEBPI_PROXY_URL"
 echo "$WEBPI_PROXY_WS_URL"
+echo "$WEBPI_DEVTOOLS_URL"
 ```
 
 A minimal Node server can use the standard `PORT` variable:
@@ -233,6 +234,17 @@ obscura serve --port "$WEBPI_PORT" --stealth
 Connect a CDP client to `${WEBPI_PROXY_WS_URL}devtools/browser`. This is a
 `wss://` endpoint for Playwright, Puppeteer, or another WebSocket client; it is
 not an `https://` page to open in the browser address bar.
+
+For Chrome's native DevTools UI, first read the page target from `/json`, then
+append its path to `$WEBPI_DEVTOOLS_URL`. For example:
+
+```text
+${WEBPI_DEVTOOLS_URL}devtools/page/page-1
+```
+
+Paste the resulting `devtools://` URL directly into Chrome's address bar.
+Google's hosted Appspot frontend cannot connect because its current Content
+Security Policy blocks WebSockets to arbitrary domains.
 
 ## Proton Drive experiments
 

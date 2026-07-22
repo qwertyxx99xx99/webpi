@@ -48,6 +48,7 @@ Use only for Node/Python/dynamic HTTP apps. Static → §Publish.
 - Use relative browser URLs; root paths escape scoped proxy prefix.
 - Proxy: HTTP methods, bodies, queries, APIs, redirects, WebSocket upgrades.
 - WebSocket base: `$WEBPI_PROXY_WS_URL`; append the server's relative socket path.
+- Chrome DevTools base: `$WEBPI_DEVTOOLS_URL`; append a page target path from `/json`, then paste into Chrome's address bar.
 - Disconnect/app restart → proxy dead.
 
 ## Proton Drive

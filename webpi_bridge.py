@@ -475,7 +475,12 @@ def _make_handler():
         def check_origin(self, origin: str) -> bool:
             if not origin:
                 return False
-            return urlparse(origin).netloc == self.request.host
+            parsed = urlparse(origin)
+            if parsed.netloc == self.request.host:
+                return True
+            return parsed.scheme in {"devtools", "chrome-devtools"} and (
+                parsed.netloc == "devtools"
+            )
 
         async def _proxy(self, token: str, requested_path: str = ""):
             with _PROXY_TARGETS_LOCK:
@@ -681,6 +686,13 @@ def _make_handler():
                 proxy_ws_url = proxy_url.replace("https://", "wss://", 1).replace(
                     "http://", "ws://", 1
                 )
+                devtools_target = proxy_ws_url.removeprefix("wss://").replace(
+                    "+", "%2B"
+                )
+                devtools_url = (
+                    "devtools://devtools/bundled/inspector.html?wss="
+                    f"{devtools_target}"
+                )
                 with _PROXY_TARGETS_LOCK:
                     _PROXY_TARGETS[self.public_token] = (self.proxy_port, proxy_url)
                 initial_cols = max(1, min(int(self.get_query_argument("cols", "100")), 500))
@@ -703,6 +715,7 @@ def _make_handler():
                     env["PORT"] = str(self.proxy_port)
                     env["WEBPI_PROXY_URL"] = proxy_url
                     env["WEBPI_PROXY_WS_URL"] = proxy_ws_url
+                    env["WEBPI_DEVTOOLS_URL"] = devtools_url
                     env["RCLONE_CONFIG"] = str(RCLONE_STATE_DIR / "rclone.conf")
                     env["RCLONE_MOUNT_DIR"] = str(RCLONE_SYNC_DIR)
                     env["WEBPI_PERSIST_BIN"] = str(PERSIST_BIN_DIR)
