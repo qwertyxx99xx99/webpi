@@ -6,10 +6,32 @@ import {
   type Model,
   type SimpleStreamOptions,
   createAssistantMessageEventStream,
+  getCurrentSystemPrompt,
+  getCurrentTools,
 } from "@earendil-works/pi-ai";
 
 const EXA_ENDPOINT = "https://demos.exa.ai/chatbot-demo/api/chat/stream";
 const EXA_MODEL = "google/gemini-2.5-flash";
+
+function activeTools(context: Context): any[] {
+  try {
+    const tools = getCurrentTools((context as any).messages || []);
+    if (Array.isArray(tools) && tools.length) return tools;
+  } catch {
+    // Older Pi releases exposed tools directly on the provider context.
+  }
+  return Array.isArray((context as any).tools) ? (context as any).tools : [];
+}
+
+function activeSystemPrompt(context: Context): string {
+  try {
+    const prompt = getCurrentSystemPrompt((context as any).messages || []);
+    if (prompt) return prompt;
+  } catch {
+    // Older Pi releases exposed the system prompt directly on the context.
+  }
+  return String((context as any).systemPrompt || "");
+}
 
 function contentToText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -43,7 +65,7 @@ function contextToPrompt(context: Context): string {
     "After a tool result, either request the next tool with the strict JSON envelope or give a concise final answer.",
   ];
 
-  if (context.systemPrompt) sections.push(`SYSTEM:\n${context.systemPrompt}`);
+  if (activeSystemPrompt(context)) sections.push(`SYSTEM:\n${activeSystemPrompt(context)}`);
   for (const message of context.messages) {
     const role = String(message.role || "user");
     const content = contentToText(message.content);
@@ -140,7 +162,7 @@ function parseToolRequest(text: string, context: Context) {
   }
   if (typeof name !== "string" || !args || typeof args !== "object" || Array.isArray(args))
     return null;
-  if (!context.tools?.some((tool: any) => tool.name === name)) return null;
+  if (!activeTools(context).some((tool: any) => tool.name === name)) return null;
   return { name, arguments: args };
 }
 

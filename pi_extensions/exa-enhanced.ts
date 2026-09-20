@@ -6,6 +6,8 @@ import {
   type Model,
   type SimpleStreamOptions,
   createAssistantMessageEventStream,
+  getCurrentSystemPrompt,
+  getCurrentTools,
 } from "@earendil-works/pi-ai";
 import { b } from "../baml_exa/baml_client/index.ts";
 import TypeBuilder, {
@@ -19,8 +21,28 @@ const UPSTREAM_MODEL = "google/gemini-2.5-flash";
 const FEEDBACK_PREFIX = "Your previous output was invalid";
 const sequentialOverrides = new WeakMap<object, unknown>();
 
+function activeTools(context: Context): any[] {
+  try {
+    const tools = getCurrentTools((context as any).messages || []);
+    if (Array.isArray(tools) && tools.length) return tools;
+  } catch {
+    // Older Pi releases exposed tools directly on the provider context.
+  }
+  return Array.isArray((context as any).tools) ? (context as any).tools : [];
+}
+
+function activeSystemPrompt(context: Context): string {
+  try {
+    const prompt = getCurrentSystemPrompt((context as any).messages || []);
+    if (prompt) return prompt;
+  } catch {
+    // Older Pi releases exposed the system prompt directly on the context.
+  }
+  return String((context as any).systemPrompt || "");
+}
+
 function restoreToolExecutionModes(context: Context): void {
-  for (const tool of context.tools || []) {
+  for (const tool of activeTools(context)) {
     if (!sequentialOverrides.has(tool)) continue;
     const previous = sequentialOverrides.get(tool);
     if (previous === undefined) delete (tool as any).executionMode;
@@ -31,7 +53,7 @@ function restoreToolExecutionModes(context: Context): void {
 
 function makeBatchSequential(context: Context, actions: any[]): void {
   if (actions.length < 2) return;
-  const tool = context.tools?.find((candidate: any) => candidate.name === actions[0].tool);
+  const tool = activeTools(context).find((candidate: any) => candidate.name === actions[0].tool);
   if (!tool) return;
   sequentialOverrides.set(tool, (tool as any).executionMode);
   (tool as any).executionMode = "sequential";
@@ -63,7 +85,7 @@ function contextToText(context: Context): string {
   });
 
   return [
-    context.systemPrompt && `SYSTEM:\n${context.systemPrompt}`,
+    activeSystemPrompt(context) && `SYSTEM:\n${activeSystemPrompt(context)}`,
     ...messages,
   ].filter(Boolean).join("\n\n");
 }
@@ -183,7 +205,7 @@ function buildToolTypes(context: Context): TypeBuilder {
   const counter = { value: 1 };
   const actions: FieldType[] = [];
 
-  for (const [index, tool] of (context.tools || []).entries()) {
+  for (const [index, tool] of activeTools(context).entries()) {
     const prefix = `${safeTypeName(tool.name)}${index + 1}`;
     const callClass = tb.addClass(`${prefix}Call`);
     callClass
@@ -280,7 +302,7 @@ async function feedbackAction(
   content: string,
   cause: unknown,
 ): Promise<any> {
-  if (!context.tools?.some((tool: any) => tool.name === "bash"))
+  if (!activeTools(context).some((tool: any) => tool.name === "bash"))
     throw new AggregateError(
       [cause],
       "Exa recovery requires the bash tool",
@@ -423,7 +445,7 @@ function streamExaBaml(
         for (const action of actions) {
           if (typeof action.tool !== "string")
             throw new Error("BAML returned a tool call without a tool name");
-          if (!context.tools?.some((tool: any) => tool.name === action.tool))
+          if (!activeTools(context).some((tool: any) => tool.name === action.tool))
             throw new Error(`BAML selected unavailable tool: ${action.tool}`);
           if (!isPlainObject(action.arguments))
             throw new Error(`BAML returned invalid arguments for tool: ${action.tool}`);
