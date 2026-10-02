@@ -362,7 +362,11 @@ def ensure_rclone_runtime() -> str:
         staging = pathlib.Path(tempfile.mkdtemp(prefix="webpi-rclone-", dir="/tmp"))
         try:
             archive = staging / archive_name
-            with urllib.request.urlopen(url, timeout=120) as response:
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": f"WebPi/{RCLONE_VERSION} (+https://github.com/theabbie/webpi)"},
+            )
+            with urllib.request.urlopen(request, timeout=120) as response:
                 archive.write_bytes(response.read())
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             if digest != expected_sha256:
