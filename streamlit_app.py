@@ -54,6 +54,7 @@ terminal_html = """
     const term = new Terminal({
       cursorBlink:true, scrollback:10000, fontSize:14, lineHeight:1.15,
       fontFamily:'SFMono-Regular,Menlo,Monaco,Consolas,monospace',
+      macOptionClickForcesSelection:true, altClickMovesCursor:false,
       theme:{background:'#0b0d10',foreground:'#e6e8eb',cursor:'#7ee787',selectionBackground:'#334155'}
     });
     const fit = new FitAddon.FitAddon();
@@ -100,6 +101,14 @@ terminal_html = """
       }
     };
     ws.onclose = () => term.writeln('\\r\\n\\x1b[31m[Connection closed]\\x1b[0m');
+    term.attachCustomKeyEventHandler(event => {
+      const key = event.key.toLowerCase();
+      if ((event.metaKey || event.ctrlKey) && key === 'c' && term.hasSelection()) {
+        navigator.clipboard?.writeText(term.getSelection());
+        return false;
+      }
+      return true;
+    });
     term.onData(data => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type:'input',data})); });
     new ResizeObserver(resize).observe(document.getElementById('terminal'));
     addEventListener('resize', resize);
