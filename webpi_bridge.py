@@ -745,7 +745,7 @@ def _make_handler():
                             "--norc",
                             "-i",
                             "-c",
-                            '"$WEBPI_PI_COMMAND"; '
+                            '"$WEBPI_PI_COMMAND" --tui-mode regular; '
                             "exec /bin/bash --noprofile --norc -i",
                         ],
                         env,
