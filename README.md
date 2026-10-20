@@ -309,6 +309,29 @@ The local copy is ephemeral across app reboots, but WebPi downloads it again
 from Proton automatically. The obscured password in the configuration is
 reversible and should not be published.
 
+## SSH access
+
+WebPi can expose a real SSH login at a fixed WebSocket path, `/webpi/ssh`. It runs Dropbear on loopback and bridges it over the same Streamlit server, so the address does not change between browser sessions. Logins use the same environment as the browser terminal and start in a fresh workspace.
+
+It is off until you add public keys to Streamlit Secrets:
+
+```toml
+WEBPI_SSH_AUTHORIZED_KEYS = """
+ssh-ed25519 AAAA... you@laptop
+"""
+# optional, keeps the host fingerprint stable across restarts:
+# base64 of a Dropbear host key file (dropbearkey -t ed25519 -f key; base64 < key)
+WEBPI_SSH_HOST_KEY = "..."
+```
+
+Connect with `websocat` as the proxy command:
+
+```bash
+ssh -o ProxyCommand='websocat -b --protocol binary wss://YOUR-APP.streamlit.app/~/+/webpi/ssh' appuser@webpi
+```
+
+Only key authentication is accepted and only the key types and data are read from the secret. `scp` and port forwarding work through the same command. The app must be awake to accept connections.
+
 ## Switch from Pi to Bash
 
 WebPi starts in Pi, but the PTY is backed by an interactive Linux Bash shell.

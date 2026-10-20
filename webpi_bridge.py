@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import errno
 import fcntl
 import hashlib
@@ -8,7 +9,9 @@ import os
 import pathlib
 import platform
 import pty
+import re
 import select
+import shlex
 import shutil
 import signal
 import socket
@@ -37,6 +40,7 @@ TOOLS_DIR = pathlib.Path("/tmp/webpi-tools")
 WORKSPACE_ROOT = pathlib.Path("/tmp/webpi-workspaces")
 RCLONE_STATE_DIR = pathlib.Path("/tmp/webpi-rclone")
 RCLONE_SYNC_DIR = pathlib.Path("/tmp/webpi-proton")
+SSH_DIR = pathlib.Path("/tmp/webpi-ssh")
 PERSIST_BIN_DIR = RCLONE_SYNC_DIR / "bin"
 PI_PACKAGE = "@earendil-works/pi-coding-agent"
 PI_CHANNEL = "latest"
@@ -79,6 +83,28 @@ _PROXY_TARGETS: dict[str, tuple[int, str]] = {}
 _PROXY_TARGETS_LOCK = threading.Lock()
 _MAX_PUBLIC_FILE_BYTES = 25 * 1024 * 1024
 _TOKEN_ALPHABET = string.ascii_lowercase + string.digits
+_SSH_KEY_TYPES = {
+    "ssh-ed25519",
+    "ssh-rsa",
+    "ecdsa-sha2-nistp256",
+    "ecdsa-sha2-nistp384",
+    "ecdsa-sha2-nistp521",
+    "sk-ssh-ed25519@openssh.com",
+    "sk-ecdsa-sha2-nistp256@openssh.com",
+}
+_SSH_LOCK = threading.Lock()
+_SSH_AUTHORIZED_KEYS: list[str] = []
+_SSH_HOST_KEY = b""
+_SSH_PROCESS = None
+_SSH_PORT = 0
+_PI_SHELL_ARGV = [
+    "/bin/bash",
+    "--noprofile",
+    "--norc",
+    "-i",
+    "-c",
+    '"$WEBPI_PI_COMMAND" --tui-mode regular; exec /bin/bash --noprofile --norc -i',
+]
 _HOP_BY_HOP_HEADERS = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailer", "transfer-encoding", "upgrade",
@@ -423,6 +449,167 @@ def _available_local_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def _terminal_env(
+    workspace: pathlib.Path,
+    proxy_port: int,
+    public_url: str = "",
+    proxy_url: str = "",
+    proxy_ws_url: str = "",
+    devtools_url: str = "",
+) -> dict:
+    env = os.environ.copy()
+    env["PI_CODING_AGENT_DIR"] = str(AGENT_DIR)
+    session_dir = workspace / ".pi-sessions"
+    session_dir.mkdir(mode=0o700, exist_ok=True)
+    env["PI_CODING_AGENT_SESSION_DIR"] = str(session_dir)
+    env["WEBPI_PUBLIC_DIR"] = str(workspace / "public")
+    if public_url:
+        env["WEBPI_PUBLIC_URL"] = public_url
+    env["WEBPI_HOST"] = "127.0.0.1"
+    env["WEBPI_PORT"] = str(proxy_port)
+    env["PORT"] = str(proxy_port)
+    if proxy_url:
+        env["WEBPI_PROXY_URL"] = proxy_url
+    if proxy_ws_url:
+        env["WEBPI_PROXY_WS_URL"] = proxy_ws_url
+    if devtools_url:
+        env["WEBPI_DEVTOOLS_URL"] = devtools_url
+    env["RCLONE_CONFIG"] = str(RCLONE_STATE_DIR / "rclone.conf")
+    env["RCLONE_MOUNT_DIR"] = str(RCLONE_SYNC_DIR)
+    env["WEBPI_PERSIST_BIN"] = str(PERSIST_BIN_DIR)
+    env["RCLONE_CACHE_DIR"] = str(RCLONE_STATE_DIR / "cache" / "proton")
+    env["RCLONE_LOG_DIR"] = str(RCLONE_STATE_DIR / "logs")
+    env["PI_TELEMETRY"] = "0"
+    env["TERM"] = "xterm-256color"
+    env["COLORTERM"] = "truecolor"
+    env["PATH"] = f"{AGENT_DIR / 'bin'}:{env.get('PATH', '')}"
+    env["PATH"] = f"{TOOLS_DIR / 'bin'}:{env.get('PATH', '')}"
+    env["PATH"] = f"{PERSIST_BIN_DIR}:{env.get('PATH', '')}"
+    if (NODE_DIR / "bin").exists():
+        env["PATH"] = f"{NODE_DIR / 'bin'}:{env.get('PATH', '')}"
+    env["PATH"] = f"{RUNTIME_DIR / 'node_modules' / '.bin'}:{env.get('PATH', '')}"
+    # Keep WebPi's transparent wrapper first in Bash.
+    env["PATH"] = f"{AGENT_DIR / 'bin'}:{env.get('PATH', '')}"
+    env["WEBPI_PI_COMMAND"] = str(AGENT_DIR / "bin" / "pi")
+    return env
+
+
+def configure_ssh_secret(authorized_keys: str = "", host_key_b64: str = "") -> None:
+    """Accept SSH public keys and an optional host key from Streamlit Secrets."""
+    global _SSH_AUTHORIZED_KEYS, _SSH_HOST_KEY
+    keys = []
+    for line in str(authorized_keys or "").splitlines():
+        parts = line.split()
+        if (
+            len(parts) >= 2
+            and parts[0] in _SSH_KEY_TYPES
+            and re.fullmatch(r"[A-Za-z0-9+/=]+", parts[1])
+        ):
+            entry = f"{parts[0]} {parts[1]}"
+            if entry not in keys:
+                keys.append(entry)
+    host_key = b""
+    if str(host_key_b64 or "").strip():
+        try:
+            host_key = base64.b64decode("".join(str(host_key_b64).split()), validate=True)
+        except ValueError:
+            host_key = b""
+    with _SSH_LOCK:
+        if keys:
+            _SSH_AUTHORIZED_KEYS = keys
+        if host_key:
+            _SSH_HOST_KEY = host_key
+
+
+def ensure_ssh_server() -> int:
+    """Start Dropbear on loopback once and return its port."""
+    global _SSH_PROCESS, _SSH_PORT
+    if not _SSH_AUTHORIZED_KEYS:
+        configure_ssh_secret(
+            os.environ.get("WEBPI_SSH_AUTHORIZED_KEYS", ""),
+            os.environ.get("WEBPI_SSH_HOST_KEY", ""),
+        )
+    with _SSH_LOCK:
+        if not _SSH_AUTHORIZED_KEYS:
+            raise RuntimeError("WebPi SSH has no authorized keys configured")
+        if _SSH_PROCESS is not None and _SSH_PROCESS.poll() is None:
+            return _SSH_PORT
+        dropbear = shutil.which("dropbear") or "/usr/sbin/dropbear"
+        dropbearkey = shutil.which("dropbearkey") or "/usr/bin/dropbearkey"
+        if not os.path.exists(dropbear):
+            raise RuntimeError("dropbear is not installed")
+        SSH_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        SSH_DIR.chmod(0o700)
+        keys_file = SSH_DIR / "authorized_keys"
+        keys_file.write_text("\n".join(_SSH_AUTHORIZED_KEYS) + "\n")
+        keys_file.chmod(0o600)
+        host_key = SSH_DIR / "host_key"
+        if _SSH_HOST_KEY:
+            host_key.write_bytes(_SSH_HOST_KEY)
+            host_key.chmod(0o600)
+        elif not host_key.exists():
+            subprocess.run(
+                [dropbearkey, "-t", "ed25519", "-f", str(host_key)],
+                check=True,
+                capture_output=True,
+            )
+            host_key.chmod(0o600)
+        launcher = SSH_DIR / "session.sh"
+        launcher.write_text(
+            "#!/bin/sh\n"
+            "WEBPI_NO_HOOK=1 exec "
+            f"{shlex.quote(sys.executable)} -c "
+            "'import webpi_bridge; webpi_bridge.ssh_session_main()'\n"
+        )
+        launcher.chmod(0o700)
+        port = _available_local_port()
+        log = open(SSH_DIR / "dropbear.log", "ab")
+        _SSH_PROCESS = subprocess.Popen(
+            [
+                dropbear, "-F", "-E", "-e", "-s", "-g", "-w", "-m",
+                "-T", "5",
+                "-p", f"127.0.0.1:{port}",
+                "-r", str(host_key),
+                "-D", str(SSH_DIR),
+                "-c", str(launcher),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+        )
+        _SSH_PORT = port
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
+                return port
+            except OSError:
+                if _SSH_PROCESS.poll() is not None:
+                    break
+                time.sleep(0.1)
+        raise RuntimeError("dropbear failed to start; see " + str(SSH_DIR / "dropbear.log"))
+
+
+def ssh_session_main() -> None:
+    """Entry point Dropbear runs for each login; mirrors the browser terminal."""
+    os.environ.pop("WEBPI_NO_HOOK", None)
+    client_term = os.environ.get("TERM")
+    workspace = _new_workspace()
+    env = _terminal_env(workspace, _available_local_port())
+    if client_term:
+        env["TERM"] = client_term
+    os.chdir(workspace)
+    command = env.get("SSH_ORIGINAL_COMMAND", "")
+    if command:
+        os.execvpe(
+            "/bin/bash", ["/bin/bash", "--noprofile", "--norc", "-c", command], env
+        )
+    if sys.stdin.isatty():
+        os.execvpe("/bin/bash", _PI_SHELL_ARGV, env)
+    os.execvpe("/bin/bash", ["/bin/bash", "--noprofile", "--norc"], env)
+
+
 def _make_handler():
     import tornado.httpclient
     import tornado.httputil
@@ -707,49 +894,15 @@ def _make_handler():
                     # dimensions before Pi performs its one-time startup draw.
                     time.sleep(0.1)
                     os.chdir(self.workspace)
-                    env = os.environ.copy()
-                    env["PI_CODING_AGENT_DIR"] = str(AGENT_DIR)
-                    session_dir = self.workspace / ".pi-sessions"
-                    session_dir.mkdir(mode=0o700)
-                    env["PI_CODING_AGENT_SESSION_DIR"] = str(session_dir)
-                    env["WEBPI_PUBLIC_DIR"] = str(self.workspace / "public")
-                    env["WEBPI_PUBLIC_URL"] = public_url
-                    env["WEBPI_HOST"] = "127.0.0.1"
-                    env["WEBPI_PORT"] = str(self.proxy_port)
-                    env["PORT"] = str(self.proxy_port)
-                    env["WEBPI_PROXY_URL"] = proxy_url
-                    env["WEBPI_PROXY_WS_URL"] = proxy_ws_url
-                    env["WEBPI_DEVTOOLS_URL"] = devtools_url
-                    env["RCLONE_CONFIG"] = str(RCLONE_STATE_DIR / "rclone.conf")
-                    env["RCLONE_MOUNT_DIR"] = str(RCLONE_SYNC_DIR)
-                    env["WEBPI_PERSIST_BIN"] = str(PERSIST_BIN_DIR)
-                    env["RCLONE_CACHE_DIR"] = str(RCLONE_STATE_DIR / "cache" / "proton")
-                    env["RCLONE_LOG_DIR"] = str(RCLONE_STATE_DIR / "logs")
-                    env["PI_TELEMETRY"] = "0"
-                    env["TERM"] = "xterm-256color"
-                    env["COLORTERM"] = "truecolor"
-                    env["PATH"] = f"{AGENT_DIR / 'bin'}:{env.get('PATH', '')}"
-                    env["PATH"] = f"{TOOLS_DIR / 'bin'}:{env.get('PATH', '')}"
-                    env["PATH"] = f"{PERSIST_BIN_DIR}:{env.get('PATH', '')}"
-                    if (NODE_DIR / "bin").exists():
-                        env["PATH"] = f"{NODE_DIR / 'bin'}:{env.get('PATH', '')}"
-                    env["PATH"] = f"{RUNTIME_DIR / 'node_modules' / '.bin'}:{env.get('PATH', '')}"
-                    # Keep WebPi's transparent wrapper first in Bash.
-                    env["PATH"] = f"{AGENT_DIR / 'bin'}:{env.get('PATH', '')}"
-                    env["WEBPI_PI_COMMAND"] = str(AGENT_DIR / "bin" / "pi")
-                    os.execvpe(
-                        "/bin/bash",
-                        [
-                            "/bin/bash",
-                            "--noprofile",
-                            "--norc",
-                            "-i",
-                            "-c",
-                            '"$WEBPI_PI_COMMAND" --tui-mode regular; '
-                            "exec /bin/bash --noprofile --norc -i",
-                        ],
-                        env,
+                    env = _terminal_env(
+                        self.workspace,
+                        self.proxy_port,
+                        public_url,
+                        proxy_url,
+                        proxy_ws_url,
+                        devtools_url,
                     )
+                    os.execvpe("/bin/bash", _PI_SHELL_ARGV, env)
 
                 self.pid, self.fd = pid, fd
                 os.set_blocking(fd, False)
@@ -816,7 +969,66 @@ def _make_handler():
                     pass
                 self.pid = None
 
-    return PiTerminalHandler, PublicFileHandler, LocalPortProxyHandler
+    class SshBridgeHandler(tornado.websocket.WebSocketHandler):
+        reader = None
+        writer = None
+        pump = None
+
+        def check_origin(self, origin: str) -> bool:
+            # Command-line clients send no Origin. Browsers do, so a web page
+            # on another site cannot open this bridge.
+            if not origin:
+                return True
+            return urlparse(origin).netloc == self.request.host
+
+        def select_subprotocol(self, subprotocols):
+            return "binary" if "binary" in subprotocols else None
+
+        async def open(self):
+            try:
+                await asyncio.to_thread(ensure_pi_runtime)
+                await asyncio.to_thread(ensure_rclone_runtime)
+                port = await asyncio.to_thread(ensure_ssh_server)
+                self.reader, self.writer = await asyncio.open_connection(
+                    "127.0.0.1", port
+                )
+            except Exception as exc:
+                self.close(code=1011, reason=str(exc)[:100])
+                return
+            self.pump = asyncio.ensure_future(self._pump())
+
+        async def _pump(self):
+            try:
+                while True:
+                    data = await self.reader.read(65536)
+                    if not data:
+                        break
+                    await self.write_message(data, binary=True)
+            except (tornado.websocket.WebSocketClosedError, OSError):
+                pass
+            finally:
+                self.close()
+
+        async def on_message(self, message):
+            if self.writer is None:
+                return
+            if isinstance(message, str):
+                message = message.encode()
+            self.writer.write(message)
+            try:
+                await self.writer.drain()
+            except OSError:
+                self.close()
+
+        def on_close(self):
+            if self.pump is not None:
+                self.pump.cancel()
+                self.pump = None
+            if self.writer is not None:
+                self.writer.close()
+                self.writer = None
+
+    return PiTerminalHandler, PublicFileHandler, LocalPortProxyHandler, SshBridgeHandler
 
 
 def install_streamlit_websocket_route() -> None:
@@ -827,7 +1039,12 @@ def install_streamlit_websocket_route() -> None:
     from streamlit.web.server.server import Server
 
     original = Server._create_app
-    terminal_handler, public_file_handler, local_port_proxy_handler = _make_handler()
+    (
+        terminal_handler,
+        public_file_handler,
+        local_port_proxy_handler,
+        ssh_bridge_handler,
+    ) = _make_handler()
 
     def create_app_with_webpi(self):
         app = original(self)
@@ -835,6 +1052,7 @@ def install_streamlit_websocket_route() -> None:
             r".*$",
             [
                 (r"/webpi/terminal", terminal_handler),
+                (r"/webpi/ssh", ssh_bridge_handler),
                 (r"/webpi/public/([^/]+)/(.*)", public_file_handler),
                 (r"/webpi/public/([^/]+)/?", public_file_handler),
                 (r"/webpi/proxy/([^/]+)/(.*)", local_port_proxy_handler),
