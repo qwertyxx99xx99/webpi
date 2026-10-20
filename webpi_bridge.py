@@ -94,9 +94,17 @@ _SSH_KEY_TYPES = {
 }
 _SSH_LOCK = threading.Lock()
 _SSH_AUTHORIZED_KEYS: list[str] = []
-_SSH_HOST_KEY = b""
-_SSH_PROCESS = None
+_SSH_HOST_KEY = ""
+_SSH_SERVER = None
 _SSH_PORT = 0
+_SSH_START_LOCK = None
+_SSH_SESSIONS = 0
+_SSH_MAX_SESSIONS = 8
+_SFTP_SERVER_PATHS = (
+    "/usr/lib/openssh/sftp-server",
+    "/usr/libexec/openssh/sftp-server",
+    "/usr/libexec/sftp-server",
+)
 _PI_SHELL_ARGV = [
     "/bin/bash",
     "--noprofile",
@@ -494,8 +502,12 @@ def _terminal_env(
     return env
 
 
-def configure_ssh_secret(authorized_keys: str = "", host_key_b64: str = "") -> None:
-    """Accept SSH public keys and an optional host key from Streamlit Secrets."""
+def configure_ssh_secret(authorized_keys: str = "", host_key: str = "") -> None:
+    """Take optional SSH settings from Streamlit Secrets.
+
+    With no authorized keys WebPi SSH is open, like the browser terminal.
+    With keys, only those public keys can log in.
+    """
     global _SSH_AUTHORIZED_KEYS, _SSH_HOST_KEY
     keys = []
     for line in str(authorized_keys or "").splitlines():
@@ -508,106 +520,306 @@ def configure_ssh_secret(authorized_keys: str = "", host_key_b64: str = "") -> N
             entry = f"{parts[0]} {parts[1]}"
             if entry not in keys:
                 keys.append(entry)
-    host_key = b""
-    if str(host_key_b64 or "").strip():
-        try:
-            host_key = base64.b64decode("".join(str(host_key_b64).split()), validate=True)
-        except ValueError:
-            host_key = b""
     with _SSH_LOCK:
         if keys:
             _SSH_AUTHORIZED_KEYS = keys
-        if host_key:
-            _SSH_HOST_KEY = host_key
+        if str(host_key or "").strip():
+            _SSH_HOST_KEY = str(host_key).strip() + "\n"
 
 
-def ensure_ssh_server() -> int:
-    """Start Dropbear on loopback once and return its port."""
-    global _SSH_PROCESS, _SSH_PORT
-    if not _SSH_AUTHORIZED_KEYS:
-        configure_ssh_secret(
-            os.environ.get("WEBPI_SSH_AUTHORIZED_KEYS", ""),
-            os.environ.get("WEBPI_SSH_HOST_KEY", ""),
-        )
-    with _SSH_LOCK:
-        if not _SSH_AUTHORIZED_KEYS:
-            raise RuntimeError("WebPi SSH has no authorized keys configured")
-        if _SSH_PROCESS is not None and _SSH_PROCESS.poll() is None:
+def _make_ssh_server_class(asyncssh):
+    class WebPiSshSession(asyncssh.SSHServerSession):
+        def __init__(self):
+            self.chan = None
+            self.term = None
+            self.size = None
+            self.command = ""
+            self.subsystem_argv = None
+            self.fd = None
+            self.pid = None
+            self.proc = None
+            self.queue = asyncio.Queue()
+            self.tasks = []
+            self.done = False
+
+        def connection_made(self, chan):
+            self.chan = chan
+
+        def pty_requested(self, term_type, term_size, term_modes):
+            self.term = term_type or "xterm-256color"
+            self.size = term_size
+            return True
+
+        def shell_requested(self):
+            return True
+
+        def exec_requested(self, command):
+            self.command = command
+            return True
+
+        def subsystem_requested(self, subsystem):
+            if subsystem != "sftp":
+                return False
+            for path in _SFTP_SERVER_PATHS:
+                if os.path.exists(path):
+                    self.subsystem_argv = [path]
+                    return True
+            return False
+
+        def session_started(self):
+            self.tasks.append(asyncio.ensure_future(self._start()))
+
+        def terminal_size_changed(self, width, height, pixwidth, pixheight):
+            if self.fd is not None:
+                try:
+                    _resize(self.fd, height or 30, width or 100)
+                except OSError:
+                    pass
+
+        def data_received(self, data, datatype):
+            self.queue.put_nowait(data)
+
+        def eof_received(self):
+            self.queue.put_nowait(None)
+            return True
+
+        def connection_lost(self, exc):
+            self._cleanup()
+
+        async def _start(self):
+            try:
+                workspace = await asyncio.to_thread(_new_workspace)
+                env = await asyncio.to_thread(
+                    _terminal_env, workspace, _available_local_port()
+                )
+                if self.term:
+                    env["TERM"] = self.term
+                if self.subsystem_argv:
+                    await self._spawn_pipe(self.subsystem_argv, env, workspace)
+                    return
+                if self.command:
+                    argv = ["/bin/bash", "--noprofile", "--norc", "-c", self.command]
+                elif self.term:
+                    argv = _PI_SHELL_ARGV
+                else:
+                    argv = ["/bin/bash", "--noprofile", "--norc"]
+                if self.term:
+                    self._spawn_pty(argv, env, workspace)
+                else:
+                    await self._spawn_pipe(argv, env, workspace)
+            except Exception as exc:
+                self.chan.write_stderr(f"WebPi: {exc}\r\n".encode())
+                self._finish(1)
+
+        def _spawn_pty(self, argv, env, workspace):
+            pid, fd = pty.fork()
+            if pid == 0:
+                try:
+                    os.chdir(workspace)
+                    os.execvpe(argv[0], argv, env)
+                finally:
+                    os._exit(127)
+            self.pid, self.fd = pid, fd
+            os.set_blocking(fd, False)
+            if self.size:
+                try:
+                    _resize(fd, self.size[1] or 30, self.size[0] or 100)
+                except OSError:
+                    pass
+            loop = asyncio.get_running_loop()
+            loop.add_reader(fd, self._on_pty_output)
+            self.tasks.append(asyncio.ensure_future(self._pty_writer()))
+
+        def _on_pty_output(self):
+            try:
+                data = os.read(self.fd, 65536)
+            except BlockingIOError:
+                return
+            except OSError:
+                data = b""
+            if data:
+                self.chan.write(data)
+                return
+            asyncio.get_running_loop().remove_reader(self.fd)
+            self.tasks.append(asyncio.ensure_future(self._reap()))
+
+        async def _pty_writer(self):
+            while True:
+                data = await self.queue.get()
+                while data and self.fd is not None:
+                    try:
+                        sent = os.write(self.fd, data)
+                        data = data[sent:]
+                    except BlockingIOError:
+                        await asyncio.sleep(0.005)
+                    except OSError:
+                        return
+
+        async def _reap(self):
+            code = 0
+            if self.pid:
+                try:
+                    _, status = await asyncio.to_thread(os.waitpid, self.pid, 0)
+                    code = os.waitstatus_to_exitcode(status)
+                except (ChildProcessError, OSError):
+                    pass
+                self.pid = None
+            self._finish(max(code, 0))
+
+        async def _spawn_pipe(self, argv, env, workspace):
+            self.proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                cwd=str(workspace),
+                start_new_session=True,
+            )
+            self.tasks.append(asyncio.ensure_future(self._pipe_writer()))
+            out = asyncio.ensure_future(self._pipe_reader(self.proc.stdout, False))
+            err = asyncio.ensure_future(self._pipe_reader(self.proc.stderr, True))
+            self.tasks.extend([out, err])
+            await asyncio.gather(out, err)
+            code = await self.proc.wait()
+            self._finish(max(code, 0))
+
+        async def _pipe_writer(self):
+            while True:
+                data = await self.queue.get()
+                try:
+                    if data is None:
+                        self.proc.stdin.close()
+                        return
+                    self.proc.stdin.write(data)
+                    await self.proc.stdin.drain()
+                except (OSError, ConnectionError):
+                    return
+
+        async def _pipe_reader(self, stream, is_stderr):
+            while True:
+                data = await stream.read(65536)
+                if not data:
+                    return
+                if is_stderr:
+                    self.chan.write_stderr(data)
+                else:
+                    self.chan.write(data)
+
+        def _finish(self, code):
+            if self.done:
+                return
+            self.done = True
+            try:
+                self.chan.exit(code)
+            except Exception:
+                pass
+
+        def _cleanup(self):
+            self.done = True
+            for task in self.tasks:
+                task.cancel()
+            self.tasks = []
+            if self.fd is not None:
+                try:
+                    asyncio.get_running_loop().remove_reader(self.fd)
+                except Exception:
+                    pass
+                try:
+                    os.close(self.fd)
+                except OSError:
+                    pass
+                self.fd = None
+            if self.pid:
+                try:
+                    os.kill(self.pid, signal.SIGHUP)
+                except ProcessLookupError:
+                    pass
+                self.pid = None
+            if self.proc is not None and self.proc.returncode is None:
+                try:
+                    os.killpg(self.proc.pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    pass
+
+    class WebPiSshServer(asyncssh.SSHServer):
+        def __init__(self):
+            self.counted = False
+
+        def connection_made(self, conn):
+            global _SSH_SESSIONS
+            if _SSH_SESSIONS >= _SSH_MAX_SESSIONS:
+                conn.abort()
+                return
+            _SSH_SESSIONS += 1
+            self.counted = True
+
+        def connection_lost(self, exc):
+            global _SSH_SESSIONS
+            if self.counted:
+                _SSH_SESSIONS -= 1
+                self.counted = False
+
+        def begin_auth(self, username):
+            return bool(_SSH_AUTHORIZED_KEYS)
+
+        def session_requested(self):
+            return WebPiSshSession()
+
+    return WebPiSshServer
+
+
+async def ensure_ssh_server() -> int:
+    """Start the in-process SSH server on loopback once and return its port."""
+    global _SSH_SERVER, _SSH_PORT, _SSH_START_LOCK
+    if _SSH_SERVER is not None:
+        return _SSH_PORT
+    if _SSH_START_LOCK is None:
+        _SSH_START_LOCK = asyncio.Lock()
+    async with _SSH_START_LOCK:
+        if _SSH_SERVER is not None:
             return _SSH_PORT
-        dropbear = shutil.which("dropbear") or "/usr/sbin/dropbear"
-        dropbearkey = shutil.which("dropbearkey") or "/usr/bin/dropbearkey"
-        if not os.path.exists(dropbear):
-            raise RuntimeError("dropbear is not installed")
+        if not _SSH_AUTHORIZED_KEYS and not _SSH_HOST_KEY:
+            configure_ssh_secret(
+                os.environ.get("WEBPI_SSH_AUTHORIZED_KEYS", ""),
+                os.environ.get("WEBPI_SSH_HOST_KEY", ""),
+            )
+        import asyncssh
+
         SSH_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
         SSH_DIR.chmod(0o700)
-        keys_file = SSH_DIR / "authorized_keys"
-        keys_file.write_text("\n".join(_SSH_AUTHORIZED_KEYS) + "\n")
-        keys_file.chmod(0o600)
-        host_key = SSH_DIR / "host_key"
+        host_key = None
         if _SSH_HOST_KEY:
-            host_key.write_bytes(_SSH_HOST_KEY)
-            host_key.chmod(0o600)
-        elif not host_key.exists():
-            subprocess.run(
-                [dropbearkey, "-t", "ed25519", "-f", str(host_key)],
-                check=True,
-                capture_output=True,
-            )
-            host_key.chmod(0o600)
-        launcher = SSH_DIR / "session.sh"
-        launcher.write_text(
-            "#!/bin/sh\n"
-            "WEBPI_NO_HOOK=1 exec "
-            f"{shlex.quote(sys.executable)} -c "
-            "'import webpi_bridge; webpi_bridge.ssh_session_main()'\n"
-        )
-        launcher.chmod(0o700)
-        port = _available_local_port()
-        log = open(SSH_DIR / "dropbear.log", "ab")
-        _SSH_PROCESS = subprocess.Popen(
-            [
-                dropbear, "-F", "-E", "-e", "-s", "-g", "-w", "-m",
-                "-T", "5",
-                "-p", f"127.0.0.1:{port}",
-                "-r", str(host_key),
-                "-D", str(SSH_DIR),
-                "-c", str(launcher),
-            ],
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=log,
-            start_new_session=True,
-        )
-        _SSH_PORT = port
-        deadline = time.time() + 5
-        while time.time() < deadline:
             try:
-                socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
-                return port
-            except OSError:
-                if _SSH_PROCESS.poll() is not None:
-                    break
-                time.sleep(0.1)
-        raise RuntimeError("dropbear failed to start; see " + str(SSH_DIR / "dropbear.log"))
-
-
-def ssh_session_main() -> None:
-    """Entry point Dropbear runs for each login; mirrors the browser terminal."""
-    os.environ.pop("WEBPI_NO_HOOK", None)
-    client_term = os.environ.get("TERM")
-    workspace = _new_workspace()
-    env = _terminal_env(workspace, _available_local_port())
-    if client_term:
-        env["TERM"] = client_term
-    os.chdir(workspace)
-    command = env.get("SSH_ORIGINAL_COMMAND", "")
-    if command:
-        os.execvpe(
-            "/bin/bash", ["/bin/bash", "--noprofile", "--norc", "-c", command], env
+                host_key = asyncssh.import_private_key(_SSH_HOST_KEY)
+            except (asyncssh.KeyImportError, ValueError):
+                host_key = None
+        if host_key is None:
+            key_path = SSH_DIR / "host_key"
+            if key_path.exists():
+                host_key = asyncssh.read_private_key(str(key_path))
+            else:
+                host_key = asyncssh.generate_private_key("ssh-ed25519")
+                key_path.write_bytes(host_key.export_private_key())
+                key_path.chmod(0o600)
+        authorized = None
+        if _SSH_AUTHORIZED_KEYS:
+            keys_file = SSH_DIR / "authorized_keys"
+            keys_file.write_text("\n".join(_SSH_AUTHORIZED_KEYS) + "\n")
+            keys_file.chmod(0o600)
+            authorized = str(keys_file)
+        _SSH_SERVER = await asyncssh.create_server(
+            _make_ssh_server_class(asyncssh),
+            "127.0.0.1",
+            0,
+            server_host_keys=[host_key],
+            authorized_client_keys=authorized,
+            encoding=None,
+            keepalive_interval=30,
+            keepalive_count_max=4,
         )
-    if sys.stdin.isatty():
-        os.execvpe("/bin/bash", _PI_SHELL_ARGV, env)
-    os.execvpe("/bin/bash", ["/bin/bash", "--noprofile", "--norc"], env)
+        _SSH_PORT = _SSH_SERVER.sockets[0].getsockname()[1]
+        return _SSH_PORT
 
 
 def _make_handler():
@@ -984,16 +1196,32 @@ def _make_handler():
         def select_subprotocol(self, subprotocols):
             return "binary" if "binary" in subprotocols else None
 
+        def _hard_close(self, code=1000, reason=None):
+            # Some WebSocket clients keep a pipe open after a close frame, so
+            # also drop the TCP stream shortly after to end the SSH client.
+            self.close(code=code, reason=reason)
+
+            def force():
+                conn = self.ws_connection
+                stream = getattr(conn, "stream", None)
+                if stream is not None:
+                    stream.close()
+
+            tornado.ioloop.IOLoop.current().call_later(1, force)
+
         async def open(self):
+            if _SSH_SESSIONS >= _SSH_MAX_SESSIONS:
+                self._hard_close(1013, "WebPi SSH is busy, try again shortly")
+                return
             try:
                 await asyncio.to_thread(ensure_pi_runtime)
                 await asyncio.to_thread(ensure_rclone_runtime)
-                port = await asyncio.to_thread(ensure_ssh_server)
+                port = await ensure_ssh_server()
                 self.reader, self.writer = await asyncio.open_connection(
                     "127.0.0.1", port
                 )
             except Exception as exc:
-                self.close(code=1011, reason=str(exc)[:100])
+                self._hard_close(1011, str(exc)[:100])
                 return
             self.pump = asyncio.ensure_future(self._pump())
 
@@ -1007,7 +1235,7 @@ def _make_handler():
             except (tornado.websocket.WebSocketClosedError, OSError):
                 pass
             finally:
-                self.close()
+                self._hard_close()
 
         async def on_message(self, message):
             if self.writer is None:

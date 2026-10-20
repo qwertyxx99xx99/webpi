@@ -311,26 +311,34 @@ reversible and should not be published.
 
 ## SSH access
 
-WebPi can expose a real SSH login at a fixed WebSocket path, `/webpi/ssh`. It runs Dropbear on loopback and bridges it over the same Streamlit server, so the address does not change between browser sessions. Logins use the same environment as the browser terminal and start in a fresh workspace.
+WebPi also serves a real SSH login at a fixed WebSocket path, `/webpi/ssh`, so the address stays the same between browser sessions. An SSH server (`asyncssh`) runs inside the app on loopback and is bridged over the same Streamlit server. Logins use the same environment as the browser terminal, start in a fresh workspace and run Pi first, like the web terminal does.
 
-It is off until you add public keys to Streamlit Secrets:
+Like the browser terminal, it is open by default: no key or password is needed. Connect with `websocat` as the proxy command:
+
+```bash
+ssh -o ProxyCommand='websocat -b --protocol binary wss://YOUR-APP.streamlit.app/~/+/webpi/ssh' \
+    -o ServerAliveInterval=30 -o ConnectTimeout=20 \
+    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null anyone@webpie
+```
+
+`scp` and `sftp` work through the same options. Port forwarding is refused and at most 8 sessions run at once.
+
+To restrict it to your own keys, add them to Streamlit Secrets. Once any key is set, only those keys can log in:
 
 ```toml
 WEBPI_SSH_AUTHORIZED_KEYS = """
 ssh-ed25519 AAAA... you@laptop
 """
-# optional, keeps the host fingerprint stable across restarts:
-# base64 of a Dropbear host key file (dropbearkey -t ed25519 -f key; base64 < key)
-WEBPI_SSH_HOST_KEY = "..."
+# optional, keeps the host fingerprint stable across restarts (contents of an
+# OpenSSH private key made with: ssh-keygen -t ed25519 -N '' -f hostkey)
+WEBPI_SSH_HOST_KEY = """
+-----BEGIN OPENSSH PRIVATE KEY-----
+...
+-----END OPENSSH PRIVATE KEY-----
+"""
 ```
 
-Connect with `websocat` as the proxy command:
-
-```bash
-ssh -o ProxyCommand='websocat -b --protocol binary wss://YOUR-APP.streamlit.app/~/+/webpi/ssh' appuser@webpi
-```
-
-Only key authentication is accepted and only the key types and data are read from the secret. `scp` and port forwarding work through the same command. The app must be awake to accept connections.
+Without `WEBPI_SSH_HOST_KEY` a new host key is generated whenever the container restarts. Shells inherit the app's environment, the same as the browser terminal, and the app must be awake to accept connections.
 
 ## Switch from Pi to Bash
 
