@@ -8,7 +8,7 @@
 
 <br>
 
-[![Pi](https://img.shields.io/badge/Pi-latest-8ABEB7?style=for-the-badge)](https://pi.dev/)
+[![Pi](https://img.shields.io/badge/Pi-1.4.0-8ABEB7?style=for-the-badge)](https://pi.dev/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.50-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io/)
 [![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](#license)
 
@@ -53,8 +53,8 @@ cursor movement, and responsive terminal resizing.
   session-specific URL in `$WEBPI_PUBLIC_URL`, with no localhost server needed.
 - **Scoped localhost servers** — each terminal receives one assigned port plus
   public HTTP and WebSocket URLs for Node, Python, CDP, and other applications.
-- **Current Pi runtime** — Streamlit bootstraps Node `22.19.0`, the latest Pi
-  release available at app startup, rclone `1.74.3`, `ripgrep`, and `fd-find`.
+- **Current Pi runtime** — Streamlit bootstraps Node `22.19.0`, Pi `1.4.0`,
+  rclone `1.74.3`, `ripgrep`, and `fd-find`.
 - **Normal interactive startup** — Pi displays its standard header, loaded
   global context, model, and extensions. Exiting Pi drops into a normal Bash
   terminal; run `pi` to start it again.
@@ -93,7 +93,7 @@ Main file: streamlit_app.py
 
 4. Deploy. No secret is required for the bundled Exa provider. The first boot
    takes longer while Streamlit installs the Python/system dependencies and
-   WebPi installs pinned Node and rclone runtimes plus the latest Pi release
+   WebPi installs pinned Node, Pi and rclone runtimes
    under `/tmp`.
 5. Optional: to enable persistent Proton-backed files and commands, generate an
    rclone configuration as described in [Proton Drive experiments](#proton-drive-experiments),
