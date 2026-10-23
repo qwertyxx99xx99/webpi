@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import collections
 import errno
 import fcntl
 import hashlib
@@ -83,6 +84,10 @@ _PROXY_TARGETS: dict[str, tuple[int, str]] = {}
 _PROXY_TARGETS_LOCK = threading.Lock()
 _MAX_PUBLIC_FILE_BYTES = 25 * 1024 * 1024
 _TOKEN_ALPHABET = string.ascii_lowercase + string.digits
+_DETACH_SECONDS = max(0, int(os.environ.get("WEBPI_DETACH_SECONDS", "600")))
+_OUTPUT_BUFFER_BYTES = 1024 * 1024
+_MAX_TERMINAL_SESSIONS = 16
+_TERMINAL_SESSIONS: dict = {}
 _SSH_KEY_TYPES = {
     "ssh-ed25519",
     "ssh-rsa",
@@ -1041,12 +1046,158 @@ def _make_handler():
         async def options(self, token: str, requested_path: str = ""):
             await self._proxy(token, requested_path)
 
+    class TerminalSession:
+        """A pty that outlives individual WebSocket connections.
+
+        Browsers on phones drop WebSockets whenever the page is backgrounded.
+        The pty is kept for a grace period and recent output is buffered so a
+        reconnecting client can resume exactly where it left off.
+        """
+
+        def __init__(self, workspace, public_token, proxy_port, pid, fd):
+            self.id = "".join(secrets.choice(_TOKEN_ALPHABET) for _ in range(32))
+            self.workspace = workspace
+            self.public_token = public_token
+            self.proxy_port = proxy_port
+            self.pid = pid
+            self.fd = fd
+            self.client = None
+            self.timer = None
+            self.detached_at = time.monotonic()
+            self.alive = True
+            self.base = 0
+            self.total = 0
+            self.size = 0
+            self.chunks = collections.deque()
+            self.loop = tornado.ioloop.IOLoop.current()
+            self.loop.add_handler(fd, self._on_output, tornado.ioloop.IOLoop.READ)
+            _TERMINAL_SESSIONS[self.id] = self
+
+        def _on_output(self, fd: int, events: int) -> None:
+            try:
+                while True:
+                    data = os.read(fd, 65536)
+                    if not data:
+                        self.finish()
+                        return
+                    self._append(data)
+                    if len(data) < 65536:
+                        return
+            except BlockingIOError:
+                return
+            except OSError as exc:
+                if exc.errno not in {errno.EIO, errno.EBADF}:
+                    raise
+                self.finish()
+
+        def _append(self, data: bytes) -> None:
+            self.chunks.append(data)
+            self.size += len(data)
+            self.total += len(data)
+            while self.size > _OUTPUT_BUFFER_BYTES and len(self.chunks) > 1:
+                dropped = self.chunks.popleft()
+                self.size -= len(dropped)
+                self.base += len(dropped)
+            client = self.client
+            if client is not None:
+                try:
+                    client.write_message(data, binary=True)
+                except tornado.websocket.WebSocketClosedError:
+                    pass
+
+        def attach(self, client, offset: int, rows: int, cols: int) -> None:
+            if self.timer is not None:
+                self.loop.remove_timeout(self.timer)
+                self.timer = None
+            previous = self.client
+            self.client = client
+            if previous is not None and previous is not client:
+                previous.session = None
+                previous.close(code=4001, reason="Taken over by another connection")
+            gap = offset < self.base or offset > self.total
+            start = self.base if gap else offset
+            replay = b"".join(self.chunks)[start - self.base:]
+            client.write_message(
+                {"type": "session", "id": self.id, "offset": start, "reset": gap}
+            )
+            if replay:
+                client.write_message(replay, binary=True)
+            try:
+                _resize(self.fd, rows, cols)
+                if gap:
+                    os.killpg(os.tcgetpgrp(self.fd), signal.SIGWINCH)
+            except OSError:
+                pass
+
+        def detach(self, client) -> None:
+            if not self.alive or self.client is not client:
+                return
+            self.client = None
+            self.detached_at = time.monotonic()
+            if _DETACH_SECONDS <= 0:
+                self.destroy()
+            else:
+                self.timer = self.loop.call_later(_DETACH_SECONDS, self.destroy)
+
+        def finish(self) -> None:
+            client, self.client = self.client, None
+            self.destroy()
+            if client is not None:
+                try:
+                    client.write_message({"type": "ended"})
+                except tornado.websocket.WebSocketClosedError:
+                    pass
+                client.close(code=4000, reason="Session ended")
+
+        def destroy(self) -> None:
+            if not self.alive:
+                return
+            self.alive = False
+            _TERMINAL_SESSIONS.pop(self.id, None)
+            if self.timer is not None:
+                self.loop.remove_timeout(self.timer)
+                self.timer = None
+            _forget_public_token(self.public_token)
+            if self.fd is not None:
+                try:
+                    self.loop.remove_handler(self.fd)
+                    os.close(self.fd)
+                except (OSError, KeyError):
+                    pass
+                self.fd = None
+            if self.pid:
+                try:
+                    os.kill(self.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                pid, self.pid = self.pid, None
+                self.loop.call_later(2, _reap_child, pid)
+
+    def _forget_public_token(token) -> None:
+        if not token:
+            return
+        with _PUBLIC_ROOTS_LOCK:
+            _PUBLIC_ROOTS.pop(token, None)
+        with _PROXY_TARGETS_LOCK:
+            _PROXY_TARGETS.pop(token, None)
+
+    def _reap_child(pid: int) -> None:
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+
     class PiTerminalHandler(tornado.websocket.WebSocketHandler):
-        pid = None
-        fd = None
-        workspace = None
+        session = None
         public_token = None
-        proxy_port = None
+
+        @property
+        def ping_interval(self):
+            return 20.0
+
+        @property
+        def ping_timeout(self):
+            return 30.0
 
         def check_origin(self, origin: str) -> bool:
             # Streamlit components are same-origin iframes. Reject cross-site
@@ -1057,7 +1208,21 @@ def _make_handler():
 
             return urlparse(origin).netloc == self.request.host
 
+        def _query_int(self, name: str, default: int, low: int, high: int) -> int:
+            try:
+                value = int(self.get_query_argument(name, str(default)))
+            except ValueError:
+                value = default
+            return max(low, min(value, high))
+
         async def open(self):
+            cols = self._query_int("cols", 100, 1, 500)
+            rows = self._query_int("rows", 30, 1, 200)
+            existing = _TERMINAL_SESSIONS.get(self.get_query_argument("session", ""))
+            if existing is not None and existing.alive:
+                self.session = existing
+                existing.attach(self, self._query_int("offset", 0, 0, 1 << 62), rows, cols)
+                return
             try:
                 pi_command = await asyncio.to_thread(ensure_pi_runtime)
                 await asyncio.to_thread(ensure_rclone_runtime)
@@ -1065,7 +1230,7 @@ def _make_handler():
                 self.public_token = "".join(
                     secrets.choice(_TOKEN_ALPHABET) for _ in range(32)
                 )
-                self.proxy_port = _available_local_port()
+                proxy_port = _available_local_port()
                 with _PUBLIC_ROOTS_LOCK:
                     _PUBLIC_ROOTS[self.public_token] = self.workspace / "public"
                 supplied_base = self.get_query_argument("public_base", "")
@@ -1097,9 +1262,8 @@ def _make_handler():
                     f"{devtools_target}"
                 )
                 with _PROXY_TARGETS_LOCK:
-                    _PROXY_TARGETS[self.public_token] = (self.proxy_port, proxy_url)
-                initial_cols = max(1, min(int(self.get_query_argument("cols", "100")), 500))
-                initial_rows = max(1, min(int(self.get_query_argument("rows", "30")), 200))
+                    _PROXY_TARGETS[self.public_token] = (proxy_port, proxy_url)
+                self._trim_detached_sessions()
                 pid, fd = pty.fork()
                 if pid == 0:
                     # Give the parent a moment to apply the browser's terminal
@@ -1108,7 +1272,7 @@ def _make_handler():
                     os.chdir(self.workspace)
                     env = _terminal_env(
                         self.workspace,
-                        self.proxy_port,
+                        proxy_port,
                         public_url,
                         proxy_url,
                         proxy_ws_url,
@@ -1116,70 +1280,52 @@ def _make_handler():
                     )
                     os.execvpe("/bin/bash", _PI_SHELL_ARGV, env)
 
-                self.pid, self.fd = pid, fd
                 os.set_blocking(fd, False)
-                _resize(fd, initial_rows, initial_cols)
-                tornado.ioloop.IOLoop.current().add_handler(
-                    fd, self._on_pty_output, tornado.ioloop.IOLoop.READ
-                )
+                session = TerminalSession(self.workspace, self.public_token, proxy_port, pid, fd)
+                self.session = session
+                self.public_token = None
+                session.attach(self, 0, rows, cols)
             except Exception as exc:
+                _forget_public_token(self.public_token)
+                self.public_token = None
                 self.write_message({"type": "error", "message": str(exc)})
                 self.close(code=1011, reason="Pi bootstrap failed")
 
-        def _on_pty_output(self, fd: int, events: int) -> None:
-            try:
-                while True:
-                    data = os.read(fd, 65536)
-                    if not data:
-                        self.close()
-                        return
-                    self.write_message(data, binary=True)
-                    if len(data) < 65536:
-                        return
-            except BlockingIOError:
-                return
-            except OSError as exc:
-                if exc.errno not in {errno.EIO, errno.EBADF}:
-                    raise
-                self.close()
+        def _trim_detached_sessions(self) -> None:
+            detached = sorted(
+                (s for s in _TERMINAL_SESSIONS.values() if s.client is None),
+                key=lambda s: s.detached_at,
+            )
+            while len(_TERMINAL_SESSIONS) >= _MAX_TERMINAL_SESSIONS and detached:
+                detached.pop(0).destroy()
 
         def on_message(self, message):
-            if self.fd is None:
+            session = self.session
+            if session is None or session.fd is None:
                 return
             if isinstance(message, bytes):
-                os.write(self.fd, message)
+                os.write(session.fd, message)
                 return
             import json
 
             try:
                 event = json.loads(message)
                 if event.get("type") == "input" and isinstance(event.get("data"), str):
-                    os.write(self.fd, event["data"].encode())
+                    os.write(session.fd, event["data"].encode())
                 elif event.get("type") == "resize":
-                    _resize(self.fd, event.get("rows", 30), event.get("cols", 100))
+                    _resize(session.fd, event.get("rows", 30), event.get("cols", 100))
+                elif event.get("type") == "ping":
+                    self.write_message({"type": "pong"})
             except (ValueError, TypeError, OSError):
                 return
 
         def on_close(self):
-            if self.public_token:
-                with _PUBLIC_ROOTS_LOCK:
-                    _PUBLIC_ROOTS.pop(self.public_token, None)
-                with _PROXY_TARGETS_LOCK:
-                    _PROXY_TARGETS.pop(self.public_token, None)
+            session, self.session = self.session, None
+            if session is not None:
+                session.detach(self)
+            else:
+                _forget_public_token(self.public_token)
                 self.public_token = None
-            if self.fd is not None:
-                try:
-                    tornado.ioloop.IOLoop.current().remove_handler(self.fd)
-                    os.close(self.fd)
-                except (OSError, KeyError):
-                    pass
-                self.fd = None
-            if self.pid:
-                try:
-                    os.kill(self.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                self.pid = None
 
     class SshBridgeHandler(tornado.websocket.WebSocketHandler):
         reader = None
