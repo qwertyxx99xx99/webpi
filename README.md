@@ -40,10 +40,14 @@ cursor movement, and responsive terminal resizing.
 - **Full-screen xterm.js** — responsive sizing, 10,000 lines of scrollback,
   true-color ANSI output, clickable links, paste, arrows, Escape, and Ctrl-key
   handling.
-- **Fresh workspace per connection** — every terminal starts in a private
+- **Fresh workspace per session** — every terminal starts in a private
   `0700` directory under `/tmp/webpi-workspaces`.
-- **Fresh session storage** — Pi transcripts stay inside that connection's
+- **Fresh session storage** — Pi transcripts stay inside that session's
   temporary workspace.
+- **Survives disconnects** — switching apps on a phone or a network blip does
+  not end the session. The terminal reconnects and resumes exactly where it
+  left off; a detached session is kept for `WEBPI_DETACH_SECONDS` (default 600,
+  `0` ends it as soon as the connection drops).
 - **Persistent Proton workspace** — `$RCLONE_MOUNT_DIR` restores Proton Drive
   when the app starts, then mirrors individual local file changes back through
   filesystem events so projects explicitly marked persistent survive restarts.
