@@ -28,3 +28,15 @@ libcairo2
 openssh-client
 openssh-sftp-server
 ffmpeg
+xvfb
+x11-xkb-utils
+xkb-data
+xauth
+x11vnc
+fluxbox
+xterm
+novnc
+websockify
+chromium
+chromium-driver
+fonts-liberation
