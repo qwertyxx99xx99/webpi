@@ -141,7 +141,8 @@ WebPi creates a clean global agent directory at `/tmp/webpi-agent` containing:
 │   └── baml_client/          # Generated tolerant tool-call parser
 └── extensions/
     ├── exa-enhanced.ts       # Default BAML-backed provider
-    └── exa-direct.ts         # Legacy hand-written parser
+    ├── exa-direct.ts         # Legacy hand-written parser
+    └── exa-handoff.ts        # /handoff command and handoff tool
 ```
 
 The configuration follows Pi's documented interactive defaults:
@@ -163,6 +164,22 @@ The configuration follows Pi's documented interactive defaults:
 
 See the official [Pi documentation](https://pi.dev/docs/latest) for commands,
 keybindings, extensions, skills, sessions, and configuration.
+
+### Hand off to a fresh session
+
+Long conversations get slow and cluttered. `exa-handoff.ts` moves the work into
+a clean session without losing the thread:
+
+- `/handoff [what happens next]` asks the current model to write a
+  self-contained handoff prompt from the conversation, starts a new session the
+  same way `/new` does, and sends the prompt there so the agent starts working
+  immediately. The old session stays available as the parent.
+- The `handoff` tool lets the agent do the same when it decides the context is
+  too long or has too many dead ends. The agent writes the prompt itself; the
+  new session starts when the current turn ends.
+
+Pi only allows session replacement from command handlers, so the tool queues an
+internal `/handoff-apply` command that performs the switch.
 
 ## Publish HTML, CSS, and JavaScript
 
@@ -386,7 +403,8 @@ webpi/
 ├── setup.py                  # Packages bootstrap modules and Pi assets
 ├── pi_extensions/
 │   ├── exa-enhanced.ts       # BAML-backed default Exa provider
-│   └── exa-direct.ts         # Legacy Exa provider
+│   ├── exa-direct.ts         # Legacy Exa provider
+│   └── exa-handoff.ts        # Handoff to a fresh session
 ├── pi_baml/
 │   ├── baml_src/             # Typed core-tool union schema
 │   └── baml_client/          # Generated TypeScript parser

@@ -64,3 +64,11 @@ Pinned rclone included. Deployment may share login + `$RCLONE_MOUNT_DIR` across 
 - Credentials sensitive. ⊥ echo/read config or `$RCLONE_CONFIG`.
 - Paths: sync `$RCLONE_MOUNT_DIR`; cache `$RCLONE_CACHE_DIR`; logs `$RCLONE_LOG_DIR`.
 - Deployment restores `$RCLONE_CONFIG` from Streamlit Secrets after restart.
+
+## Handoff
+
+`/handoff [next step]` or tool `handoff` → new session, old context gone.
+
+- Long thread, repeated dead ends, or user asks fresh start → call `handoff`. ⊥ use it to dodge unfinished work.
+- Prompt = first message to an agent with no memory: goal, decisions, files/commands, state, exact next step.
+- Finish or report the current step first. Mention the handoff in one line before calling.
