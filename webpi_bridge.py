@@ -257,6 +257,7 @@ def _write_agent_config() -> None:
     extensions.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "pi_extensions" / "exa-direct.ts", extensions / "exa-direct.ts")
     shutil.copy2(ROOT / "pi_extensions" / "exa-enhanced.ts", extensions / "exa-enhanced.ts")
+    shutil.copy2(ROOT / "pi_extensions" / "exa-handoff.ts", extensions / "exa-handoff.ts")
     shutil.copytree(
         ROOT / "pi_baml" / "baml_client",
         AGENT_DIR / "baml_exa" / "baml_client",
