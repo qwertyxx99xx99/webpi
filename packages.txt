@@ -40,3 +40,6 @@ websockify
 chromium
 chromium-driver
 fonts-liberation
+default-jre-headless
+apksigner
+python3-venv
