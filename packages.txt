@@ -43,3 +43,5 @@ fonts-liberation
 default-jre-headless
 apksigner
 python3-venv
+default-jdk-headless
+apktool

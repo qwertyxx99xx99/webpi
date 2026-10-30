@@ -72,3 +72,7 @@ Pinned rclone included. Deployment may share login + `$RCLONE_MOUNT_DIR` across 
 - Long thread, repeated dead ends, or user asks fresh start → call `handoff`. ⊥ use it to dodge unfinished work.
 - Prompt = first message to an agent with no memory: goal, decisions, files/commands, state, exact next step.
 - Finish or report the current step first. Mention the handoff in one line before calling.
+
+## Reverse engineering
+
+REA is installed with its skill `reverse-engineer-anything`. Load that skill for app, APK, Electron, web bundle or binary analysis. CLI: `npx -y rea-agents@6.8.0 <command>`. Check readiness with `npx -y rea-agents@6.8.0 doctor --client pi --json`. Native analysis engines (Ghidra, Hopper, IDA, jadx, Kuna) are not preinstalled; report that gap instead of guessing.
