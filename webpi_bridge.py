@@ -45,7 +45,8 @@ SSH_DIR = pathlib.Path("/tmp/webpi-ssh")
 PERSIST_BIN_DIR = RCLONE_SYNC_DIR / "bin"
 PI_PACKAGE = "@earendil-works/pi-coding-agent"
 PI_CHANNEL = "latest"
-NODE_VERSION = "22.19.0"
+NODE_VERSION = "22.23.4"
+REA_VERSION = "6.8.0"
 RCLONE_VERSION = "1.74.3"
 RCLONE_BUILDS = {
     ("linux", "x86_64"): (
@@ -369,7 +370,24 @@ def ensure_pi_runtime() -> str:
             raise RuntimeError("Pi installation completed but its executable was not found")
         RUNTIME_STAMP.write_text(RUNTIME_SIGNATURE)
         _write_agent_config()
+        _setup_rea(npm, install_env)
         return str(runtime_pi)
+
+
+def _setup_rea(npm: str, env: dict[str, str]) -> None:
+    """Install the REA skill for Pi. Best effort: a failure must not block startup."""
+    npx = pathlib.Path(npm).with_name("npx")
+    try:
+        subprocess.run(
+            [str(npx), "-y", f"rea-agents@{REA_VERSION}", "setup", "--client", "pi", "--yes"],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=240,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def ensure_rclone_runtime() -> str:
