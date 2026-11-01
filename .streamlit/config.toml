@@ -4,3 +4,8 @@ base = "dark"
 [server]
 headless = true
 enableXsrfProtection = true
+enableCORS = true
+corsAllowedOrigins = [
+  "https://webpie.streamlit.app",
+  "https://theabbie.github.io"
+]
