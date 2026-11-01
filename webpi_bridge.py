@@ -903,6 +903,8 @@ def _make_handler():
             if not origin:
                 return False
             parsed = urlparse(origin)
+            if parsed.scheme == "https" and parsed.netloc == "theabbie.github.io":
+                return True
             if parsed.netloc == self.request.host:
                 return True
             return parsed.scheme in {"devtools", "chrome-devtools"} and (
