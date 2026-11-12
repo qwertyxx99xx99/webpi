@@ -43,6 +43,7 @@ RCLONE_STATE_DIR = pathlib.Path("/tmp/webpi-rclone")
 RCLONE_SYNC_DIR = pathlib.Path("/tmp/webpi-proton")
 SSH_DIR = pathlib.Path("/tmp/webpi-ssh")
 PERSIST_BIN_DIR = RCLONE_SYNC_DIR / "bin"
+STARTUP_SCRIPT = RCLONE_SYNC_DIR / "startup" / "on-boot.sh"
 PI_PACKAGE = "@earendil-works/pi-coding-agent"
 PI_CHANNEL = "latest"
 NODE_VERSION = "22.23.4"
@@ -78,6 +79,7 @@ _INSTALL_LOCK = threading.Lock()
 _RCLONE_INSTALL_LOCK = threading.Lock()
 _RCLONE_SYNC_LOCK = threading.Lock()
 _RCLONE_SYNC_STARTED = False
+_STARTUP_RAN = False
 _PATCHED = False
 _PUBLIC_ROOTS: dict[str, pathlib.Path] = {}
 _PUBLIC_ROOTS_LOCK = threading.Lock()
@@ -182,6 +184,7 @@ def _rclone_sync_loop() -> None:
     for command in PERSIST_BIN_DIR.iterdir():
         if command.is_file():
             command.chmod(command.stat().st_mode | 0o700)
+    _run_startup_script()
 
     class UploadHandler(FileSystemEventHandler):
         def remote_path(self, path: str) -> str:
@@ -216,6 +219,44 @@ def _rclone_sync_loop() -> None:
     observer.schedule(UploadHandler(), str(RCLONE_SYNC_DIR), recursive=True)
     observer.start()
     observer.join()
+
+
+def _run_startup_script() -> None:
+    """Run the persisted on-boot script once per app start. Never raises."""
+    global _STARTUP_RAN
+    try:
+        if _STARTUP_RAN or not STARTUP_SCRIPT.is_file():
+            return
+        _STARTUP_RAN = True
+        env = os.environ.copy()
+        env["WEBPI_PERSIST_BIN"] = str(PERSIST_BIN_DIR)
+        env["PATH"] = f"{PERSIST_BIN_DIR}:{TOOLS_DIR / 'bin'}:{env.get('PATH', '')}"
+        log_dir = RCLONE_STATE_DIR / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        with open(log_dir / "startup.log", "ab") as log:
+            log.write(f"\n--- {time.strftime('%F %T')} {STARTUP_SCRIPT}\n".encode())
+            log.flush()
+            subprocess.Popen(
+                ["/bin/bash", str(STARTUP_SCRIPT)],
+                cwd=str(STARTUP_SCRIPT.parent),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=log,
+                start_new_session=True,
+            )
+    except Exception:
+        pass
+
+
+def start_persist_from_env() -> None:
+    """Start Proton sync (and so the on-boot script) at server start, before any visitor."""
+    try:
+        if os.path.basename(sys.argv[0]) != "streamlit" or "run" not in sys.argv[1:2]:
+            return
+        configure_rclone_secret(os.environ.get("RCLONE_CONFIG_CONTENT", ""))
+    except Exception:
+        pass
 
 
 def _node_major(command: str) -> int:

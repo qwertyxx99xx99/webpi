@@ -8,3 +8,10 @@ except Exception:
     # The app displays bootstrap errors itself. Never prevent Streamlit's CLI
     # from starting because an internal hook changed between versions.
     pass
+
+try:
+    from webpi_bridge import start_persist_from_env
+
+    start_persist_from_env()
+except Exception:
+    pass

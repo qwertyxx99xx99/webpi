@@ -21,6 +21,7 @@ Session workspace disappears. `$RCLONE_MOUNT_DIR` persists via Proton sync.
 - Persistent CLI → install executable in PATH:
   `install -m 0755 SCRIPT "$WEBPI_PERSIST_BIN/NAME"`
 - Persistent Pi resources → `$RCLONE_MOUNT_DIR/.pi/{extensions,skills,prompts,themes}`; run `/reload` after changes.
+- Run something on every restart/startup → append an idempotent, user-space (no sudo) command to `$RCLONE_MOUNT_DIR/startup/on-boot.sh` (`mkdir -p` the dir; create with `#!/bin/bash` if missing; never overwrite existing lines; background long-running ones with `nohup ... &`). WebPi runs it once per app start after the Proton pull; errors there are ignored but logged to `/tmp/webpi-rclone/logs/startup.log`. Test by running it once now: `bash "$RCLONE_MOUNT_DIR/startup/on-boot.sh"`.
 - Persistent static source stays under `$RCLONE_MOUNT_DIR`; live copy:
   `mkdir -p "$WEBPI_PUBLIC_DIR" && cp -a SOURCE/. "$WEBPI_PUBLIC_DIR/"`
 
